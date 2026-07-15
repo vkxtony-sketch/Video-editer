@@ -53,7 +53,18 @@ describe("ProjectHeader", () => {
   it("renders the Real LLM narrative badge when llmMode is 'real'", () => {
     renderHeader({ llmMode: "real", llmProvider: "groq · llama-3.1-8b-instant" });
     expect(screen.getByTestId("badge-llm-real")).toBeInTheDocument();
-    expect(screen.getByTestId("badge-llm-real")).toHaveTextContent(/groq/);
+    expect(screen.getByTestId("badge-llm-real")).toHaveTextContent(/Groq/);
+  });
+
+  it("renders the EXACT badge text 'Real LLM narrative · Groq · llama-3.1-8b-instant' when wired to a real Groq key", () => {
+    // This is the user's success criterion: paste GROQ_API_KEY → Studio
+    // header shows this exact label.
+    renderHeader({ llmMode: "real", llmProvider: "groq · llama-3.1-8b-instant" });
+    const badge = screen.getByTestId("badge-llm-real");
+    expect(badge).toHaveTextContent("Real LLM narrative · Groq · llama-3.1-8b-instant");
+    // Negative assertions: the other two variants must NOT be rendered.
+    expect(screen.queryByTestId("badge-llm-fixture")).toBeNull();
+    expect(screen.queryByTestId("badge-llm-deterministic")).toBeNull();
   });
 
   it("renders the fixture-mode badge when llmProvider contains 'fixture'", () => {

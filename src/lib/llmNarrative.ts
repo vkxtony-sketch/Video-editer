@@ -15,6 +15,7 @@ export {
   buildGroqRequestBody,
   extractGroqContent,
   buildNarrativeFixture,
+  handleGenerateNarrative,
 } from "../../convex/_narrativeHelpers";
 
 export type {
@@ -22,4 +23,6 @@ export type {
   NarrativeHeadline,
   NarrativePayload,
   NarrativeMetrics,
+  GenerateNarrativeArgs,
+  NarrativeResult,
 } from "../../convex/_narrativeHelpers";

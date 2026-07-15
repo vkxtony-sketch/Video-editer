@@ -327,3 +327,132 @@ function seededRand(seed: number): () => number {
     return s / 4294967296;
   };
 }
+
+// --------------------------------------------------------------------------
+// LLM action body (kept pure so it can be exercised by Vitest end-to-end).
+// --------------------------------------------------------------------------
+
+export type GenerateNarrativeArgs = {
+  title: string;
+  persona?: string;
+  durationSec: number;
+  scenesDetected: number;
+  silencesCount: number;
+  peakRms: number;
+  meanRms: number;
+  model?: string;
+};
+
+export type NarrativeResult =
+  | {
+      ok: true;
+      mode: "real";
+      provider: string;
+      payload: NarrativePayload;
+    }
+  | { ok: true; mode: "deterministic"; provider: null; payload: null };
+
+/**
+ * Pure action-body implementation. Reads `env.GROQ_API_KEY` (and optional
+ * `env.GROQ_DEMO_MODE`) from the passed env map rather than `process.env`
+ * directly so tests can drive every code path. The `fetchImpl` parameter
+ * defaults to `globalThis.fetch` and exists for the same reason.
+ *
+ * Returns a discriminated union — never throws.
+ */
+export async function handleGenerateNarrative(
+  args: GenerateNarrativeArgs,
+  env: Record<string, string | undefined> = {},
+  fetchImpl: typeof fetch = globalThis.fetch,
+): Promise<NarrativeResult> {
+  const apiKey = env.GROQ_API_KEY;
+  const demoMode = env.GROQ_DEMO_MODE === "simulate";
+
+  // Dev-only fixture path. Activated only when BOTH GROQ_DEMO_MODE=simulate
+  // is set AND no real GROQ_API_KEY is present — so a stray env var in
+  // production (where the user has wired a real key) cannot accidentally
+  // swap real copy for fixture copy. Returns a deterministic, metric-driven
+  // payload so the user can verify the badge flip + numeric copy without
+  // burning Groq quota.
+  if (demoMode && (!apiKey || apiKey.length < 10)) {
+    const metrics: NarrativeMetrics = {
+      title: args.title,
+      persona: args.persona,
+      durationSec: args.durationSec,
+      scenesDetected: args.scenesDetected,
+      silencesCount: args.silencesCount,
+      peakRms: args.peakRms,
+      meanRms: args.meanRms,
+    };
+    const payload = buildNarrativeFixture(metrics);
+    return {
+      ok: true,
+      mode: "real",
+      provider: "groq · fixture (no API call)",
+      payload,
+    };
+  }
+
+  if (!apiKey || apiKey.length < 10) {
+    return { ok: true, mode: "deterministic", provider: null, payload: null };
+  }
+
+  const metrics: NarrativeMetrics = {
+    title: args.title,
+    persona: args.persona,
+    durationSec: args.durationSec,
+    scenesDetected: args.scenesDetected,
+    silencesCount: args.silencesCount,
+    peakRms: args.peakRms,
+    meanRms: args.meanRms,
+  };
+
+  let response: Response;
+  try {
+    const built = buildNarrativePrompt(metrics);
+    const req = buildGroqRequestBody({
+      apiKey,
+      model: args.model,
+      system: built.system,
+      user: built.user,
+    });
+    response = await fetchImpl(req.url, req.init);
+  } catch (e) {
+    console.warn("[llm] Groq fetch failed, falling back:", (e as Error).message);
+    return { ok: true, mode: "deterministic", provider: null, payload: null };
+  }
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => "");
+    console.warn(
+      `[llm] Groq returned ${response.status}, falling back:`,
+      body.slice(0, 200),
+    );
+    return { ok: true, mode: "deterministic", provider: null, payload: null };
+  }
+
+  let json: unknown;
+  try {
+    json = await response.json();
+  } catch (e) {
+    console.warn("[llm] Groq body parse failed:", (e as Error).message);
+    return { ok: true, mode: "deterministic", provider: null, payload: null };
+  }
+  const content = extractGroqContent(json);
+  if (content == null) {
+    console.warn("[llm] Groq returned no assistant content");
+    return { ok: true, mode: "deterministic", provider: null, payload: null };
+  }
+  const validated = validateNarrativeResponse(content);
+  if (!validated.ok) {
+    console.warn("[llm] Groq payload shape invalid:", validated.error);
+    return { ok: true, mode: "deterministic", provider: null, payload: null };
+  }
+  const model = args.model ?? GROQ_DEFAULT_MODEL;
+  return {
+    ok: true,
+    mode: "real",
+    provider: `groq · ${model}`,
+    payload: validated.payload,
+  };
+}
