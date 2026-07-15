@@ -8,6 +8,7 @@
  * @module
  */
 
+import type * as analyze from "../analyze.js";
 import type * as pipeline from "../pipeline.js";
 import type * as pipelineHelpers from "../pipelineHelpers.js";
 import type * as projects from "../projects.js";
@@ -20,6 +21,7 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  analyze: typeof analyze;
   pipeline: typeof pipeline;
   pipelineHelpers: typeof pipelineHelpers;
   projects: typeof projects;

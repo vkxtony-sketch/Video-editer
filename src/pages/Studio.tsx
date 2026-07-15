@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useAction, useQuery } from "convex/react";
+import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import ProjectHeader from "../components/studio/ProjectHeader";
@@ -16,6 +16,7 @@ import GeneratedTabs, {
 import TerminalLog, { LogLine } from "../components/studio/TerminalLog";
 import TimelineStrip, { TimelineClip } from "../components/studio/TimelineStrip";
 import { Skeleton } from "../components/ui/skeleton";
+import { detectSilenceFromUrl } from "@/lib/silenceDetect";
 
 export default function Studio() {
   const { id } = useParams<{ id: string }>();
@@ -28,14 +29,15 @@ export default function Studio() {
   const caps = useQuery(api.queries.listCaptions, { projectId });
   const runRow = useQuery(api.queries.latestRun, { projectId });
   const run = useAction(api.pipeline.runPipeline);
+  const appendCuts = useMutation(api.projects.appendCuts);
   const [activeClip, setActiveClip] = useState<string | null>(null);
   const [scrubToSec, setScrubToSec] = useState<number | null>(null);
   const [startedOnce, setStartedOnce] = useState(false);
+  const [audioScanRunning, setAudioScanRunning] = useState(false);
+  const audioScanStartedRef = useRef<string | null>(null);
 
   useEffect(() => {
     if (!project) return;
-    // Only invoke the demo runPipeline for source kinds that we couldn't
-    // analyse client-side. Real uploads already have their artifacts.
     const needsDemoRun =
       project.status === "queued" &&
       (project.source === "demo" || project.source === "sample" || project.source === "url");
@@ -44,6 +46,44 @@ export default function Studio() {
       run({ projectId }).catch(() => {});
     }
   }, [project?.status, project?.source, project, run, projectId, startedOnce]);
+
+  // Real audio silence detection: when a project is ready and has a playable
+  // audio source that we haven't yet scanned, decode it in the browser and
+  // append real cut markers to the timeline. We use a ref keyed by projectId
+  // so React Strict Mode double-invocation and page refreshes don't fire twice.
+  useEffect(() => {
+    if (!project) return;
+    if (project.status !== "ready") return;
+    if (project.audioScanDone) return;
+    if (!project.sourceUrl) return;
+    if (audioScanStartedRef.current === projectId) return;
+    if (audioScanRunning) return;
+    audioScanStartedRef.current = projectId;
+    setAudioScanRunning(true);
+    (async () => {
+      try {
+        const cuts = await detectSilenceFromUrl(project.sourceUrl!);
+        if (cuts.length > 0) {
+          await appendCuts({ projectId, cuts });
+        } else {
+          // No cuts found — still mark scanned so we don't keep trying.
+          await appendCuts({ projectId, cuts: [] });
+        }
+      } catch (e) {
+        console.warn("audio scan failed", e);
+      } finally {
+        setAudioScanRunning(false);
+      }
+    })();
+  }, [
+    project?.status,
+    project?.audioScanDone,
+    project?.sourceUrl,
+    projectId,
+    appendCuts,
+    audioScanRunning,
+    project,
+  ]);
 
   if (!project) {
     return (
@@ -63,7 +103,9 @@ export default function Studio() {
   const derivedTitles: TitleItem[] = titles ?? [];
   const derivedThumbs: ThumbItem[] = thumbs ?? [];
   const derivedCaps: CaptionItem[] = caps ?? [];
-  const activeStage = runRow?.activeStage ?? "";
+  const activeStage = audioScanRunning
+    ? "Real audio silence scan · Web Audio API"
+    : runRow?.activeStage ?? "";
   const activeClipObj = derivedHighs.find((c) => c._id === activeClip) ?? null;
 
   const navigate = useNavigate();
@@ -92,6 +134,8 @@ export default function Studio() {
         onReset={reset}
         demoMode={project.source !== "upload"}
         source={project.source}
+        audioCutCount={project.audioCutCount ?? 0}
+        audioScanDone={project.audioScanDone ?? false}
       />
 
       <div className="grid grid-cols-1 gap-3 px-3 py-3 lg:grid-cols-12">

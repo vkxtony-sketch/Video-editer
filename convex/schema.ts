@@ -26,6 +26,8 @@ export default defineSchema({
     ownerId: v.string(),
     persona: v.optional(v.string()),
     summary: v.optional(v.string()),
+    audioScanDone: v.optional(v.boolean()),
+    audioCutCount: v.optional(v.number()),
   }).index("by_owner", ["ownerId"]),
 
   pipelineRuns: defineTable({

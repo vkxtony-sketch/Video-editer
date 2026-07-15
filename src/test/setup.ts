@@ -9,7 +9,7 @@ import { getFunctionName } from "convex/server";
 // ---------------------------------------------------------------------------
 
 if (typeof globalThis !== "undefined" && !("IntersectionObserver" in globalThis)) {
-  // @ts-expect-error - lightweight stub
+  // @ts-ignore - lightweight stub (only installed if missing)
   globalThis.IntersectionObserver = class {
     observe() {}
     unobserve() {}
@@ -24,7 +24,7 @@ if (typeof globalThis !== "undefined" && !("IntersectionObserver" in globalThis)
 }
 
 if (typeof globalThis !== "undefined" && !("ResizeObserver" in globalThis)) {
-  // @ts-expect-error - lightweight stub
+  // @ts-ignore - lightweight stub (only installed if missing)
   globalThis.ResizeObserver = class {
     observe() {}
     unobserve() {}
@@ -33,7 +33,7 @@ if (typeof globalThis !== "undefined" && !("ResizeObserver" in globalThis)) {
 }
 
 if (typeof window !== "undefined" && !window.matchMedia) {
-  // @ts-expect-error - lightweight stub for shadcn/Radix check
+  // @ts-ignore - lightweight stub for shadcn/Radix check
   window.matchMedia = (query: string) => ({
     matches: false,
     media: query,
@@ -47,7 +47,7 @@ if (typeof window !== "undefined" && !window.matchMedia) {
 }
 
 if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
-  // @ts-expect-error - lightweight stub
+  // @ts-ignore - lightweight stub
   Element.prototype.scrollIntoView = function () {};
 }
 

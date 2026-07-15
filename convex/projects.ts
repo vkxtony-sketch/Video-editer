@@ -79,6 +79,48 @@ export const setStatus = mutation({
   },
 });
 
+export const appendCuts = mutation({
+  args: {
+    projectId: v.id("projects"),
+    cuts: v.array(
+      v.object({
+        startSec: v.number(),
+        endSec: v.number(),
+        kind: v.union(v.literal("long-dead"), v.literal("micro")),
+        avgDb: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    let inserted = 0;
+    for (const c of args.cuts) {
+      const durSec = c.endSec - c.startSec;
+      const isLong = c.kind === "long-dead";
+      await ctx.db.insert("clips", {
+        projectId: args.projectId,
+        kind: "cut" as const,
+        title: isLong ? "Real dead air (Web Audio)" : "Real micro-pause (Web Audio)",
+        startSec: Math.floor(c.startSec),
+        endSec: Math.floor(c.endSec),
+        score: Math.round((1 - Math.min(1, durSec / 8)) * 100) / 100,
+        rationale: isLong
+          ? `Detected ${durSec.toFixed(1)}s of silence (${c.avgDb} dBFS). Safe to cut.`
+          : `Detected ${durSec.toFixed(1)}s breath/pause (${c.avgDb} dBFS). Optional cut.`,
+        tags: ["real-audio", "auto-cut", isLong ? "dead-air" : "filler"],
+        createdAt: now,
+      });
+      inserted++;
+    }
+    await ctx.db.patch(args.projectId, {
+      audioScanDone: true,
+      audioCutCount: inserted,
+      updatedAt: now,
+    });
+    return { inserted };
+  },
+});
+
 export const remove = mutation({
   args: { id: v.id("projects") },
   handler: async (ctx, args) => {

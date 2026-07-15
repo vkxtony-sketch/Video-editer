@@ -68,8 +68,8 @@ describe("Dashboard", () => {
     const del = screen.getByText(/Delete/i);
     await userEvent.click(del);
     await new Promise((r) => setTimeout(r, 0));
-    const removes = calls.mutation.filter((c) => c.apiKey === "projects.remove");
+    const removes = calls.mutation.filter((c: { apiKey: string }) => c.apiKey === "projects.remove");
     expect(removes.length).toBe(1);
-    expect((removes[0].args as any).id).toBe("p_xyz789");
+    expect((removes[0].args as { id: string }).id).toBe("p_xyz789");
   });
 });

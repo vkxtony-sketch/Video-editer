@@ -8,6 +8,7 @@
 
 import { analyzeAudio, findEnergyPeaks, type AudioAnalysis, type AudioSilence } from "./audioAnalysis";
 import { analyzeVideo, type VideoAnalysis, type SceneChange } from "./videoAnalysis";
+import type { Id } from "../../convex/_generated/dataModel";
 
 export type AnalysisProgress =
   | { stage: "audio-decode"; frac: number }
@@ -17,7 +18,7 @@ export type AnalysisProgress =
   | { stage: "ingest"; frac: number };
 
 export type ClipArtifact = {
-  projectId: string;
+  projectId: Id<"projects">;
   kind: "highlight" | "short" | "chapter" | "cut";
   title: string;
   startSec: number;
@@ -29,7 +30,7 @@ export type ClipArtifact = {
 };
 
 export type TitleArtifact = {
-  projectId: string;
+  projectId: Id<"projects">;
   label: string;
   body: string;
   score: number;
@@ -37,7 +38,7 @@ export type TitleArtifact = {
 };
 
 export type ThumbArtifact = {
-  projectId: string;
+  projectId: Id<"projects">;
   headline: string;
   subtext: string;
   palette: string;
@@ -45,7 +46,7 @@ export type ThumbArtifact = {
 };
 
 export type CaptionArtifact = {
-  projectId: string;
+  projectId: Id<"projects">;
   startSec: number;
   endSec: number;
   speaker: string;
@@ -70,7 +71,7 @@ export type AnalysisArtifacts = {
 
 export async function analyzeAndIngest(opts: {
   file: File;
-  projectId: string;
+  projectId: Id<"projects">;
   title: string;
   persona: string;
   ownerId: string;
@@ -119,7 +120,7 @@ export async function analyzeAndIngest(opts: {
 }
 
 function buildArtifacts(opts: {
-  projectId: string;
+  projectId: Id<"projects">;
   audio: AudioAnalysis;
   video: VideoAnalysis;
   title: string;

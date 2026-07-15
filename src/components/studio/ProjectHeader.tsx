@@ -25,6 +25,8 @@ export default function ProjectHeader({
   onReset,
   demoMode,
   source,
+  audioCutCount,
+  audioScanDone,
   onExport,
 }: {
   title: string;
@@ -38,6 +40,8 @@ export default function ProjectHeader({
   onReset: () => void;
   demoMode: boolean;
   source?: "upload" | "url" | "demo" | "sample";
+  audioCutCount?: number;
+  audioScanDone?: boolean;
   /** Real Export hook — receives the project meta. Defaults to a JSON EDL download. */
   onExport?: (edl: ExportArtifact) => void;
 }) {
@@ -75,8 +79,13 @@ export default function ProjectHeader({
               {persona}
             </Badge>
           )}
-          {source === "upload" && (
+          {source === "upload" && audioScanDone && (
             <Badge variant="outline" className="border-accent/40 bg-accent/10 text-accent">
+              Real audio scan · {audioCutCount ?? 0} cuts
+            </Badge>
+          )}
+          {source === "upload" && !audioScanDone && (
+            <Badge variant="outline" className="border-primary/40 bg-primary/10 text-primary">
               Real analysis · browser-side
             </Badge>
           )}

@@ -66,10 +66,10 @@ describe("Studio", () => {
     convexMock.action("pipeline:runPipeline", undefined);
     renderStudio();
     await waitFor(() => {
-      const runs = calls.action.filter((c) => c.apiKey === "pipeline.runPipeline");
+      const runs = calls.action.filter((c: { apiKey: string }) => c.apiKey === "pipeline.runPipeline");
       expect(runs.length).toBe(1);
     });
-    expect((calls.action[0].args as any).projectId).toBe("p_xyz789");
+    expect((calls.action[0].args as { projectId: string }).projectId).toBe("p_xyz789");
   });
 
   it("does NOT call runPipeline when status is 'ready'", async () => {
@@ -78,7 +78,7 @@ describe("Studio", () => {
     renderStudio();
     await new Promise((r) => setTimeout(r, 30));
     expect(
-      calls.action.filter((c) => c.apiKey === "pipeline.runPipeline").length,
+      calls.action.filter((c: { apiKey: string }) => c.apiKey === "pipeline.runPipeline").length,
     ).toBe(0);
   });
 
