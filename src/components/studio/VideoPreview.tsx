@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Cpu, Play, ScanLine, Sparkles, Volume2 } from "lucide-react";
+import { Cpu, Film, Play, ScanLine, Sparkles, Volume2 } from "lucide-react";
 import { formatTimestamp } from "@/lib/utils";
 
 export type PreviewProps = {
@@ -21,6 +21,12 @@ function youtubeId(url?: string): string | null {
   return m ? m[1] : null;
 }
 
+function isPlayableVideo(url?: string): boolean {
+  if (!url) return false;
+  if (url.startsWith("blob:")) return true;
+  return /\.(mp4|mov|webm|m4v|mkv|avi)(\?|$)/i.test(url);
+}
+
 export default function VideoPreview({
   videoUrl,
   persona,
@@ -30,16 +36,33 @@ export default function VideoPreview({
   status,
   scrubToSec,
 }: PreviewProps) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   const [tick, setTick] = useState(0);
+  const [nowPlaying, setNowPlaying] = useState(false);
+
   useEffect(() => {
     const id = window.setInterval(() => setTick((t) => t + 1), 80);
     return () => window.clearInterval(id);
   }, []);
 
   const yt = youtubeId(videoUrl);
+  const playable = !yt && isPlayableVideo(videoUrl);
   const total = Math.max(durationSec, 60);
   const ratio = scrubToSec != null ? scrubToSec / total : 0;
   const playhead = Math.min(1, Math.max(0, ratio));
+
+  function seekTo(sec: number) {
+    const v = videoRef.current;
+    if (!v) return;
+    v.currentTime = Math.max(0, Math.min(total, sec));
+    if (v.paused) void v.play().catch(() => {});
+  }
+
+  // When the parent asks us to scrub, jump the real video element.
+  useEffect(() => {
+    if (playable && scrubToSec != null) seekTo(scrubToSec);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scrubToSec, playable]);
 
   return (
     <div className="relative h-full overflow-hidden rounded-xl border border-border/70 bg-card/60">
@@ -49,6 +72,11 @@ export default function VideoPreview({
             <Play className="h-3.5 w-3.5" />
           </span>
           <span className="font-medium">Preview</span>
+          {playable && (
+            <span className="rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-accent">
+              Loaded source
+            </span>
+          )}
           {persona && (
             <span className="rounded border border-border/80 bg-secondary/60 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
               {persona}
@@ -70,6 +98,16 @@ export default function VideoPreview({
             title="Source"
             allow="accelerometer; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
             allowFullScreen
+          />
+        ) : playable ? (
+          <video
+            ref={videoRef}
+            className="absolute inset-0 h-full w-full bg-black object-contain"
+            src={videoUrl}
+            controls
+            preload="metadata"
+            onPlay={() => setNowPlaying(true)}
+            onPause={() => setNowPlaying(false)}
           />
         ) : (
           <PreviewCanvas
@@ -106,6 +144,18 @@ export default function VideoPreview({
         {status === "ready" && (
           <div className="pointer-events-none absolute right-4 top-4 inline-flex items-center gap-2 rounded border border-accent/40 bg-background/70 px-2.5 py-1 text-[10px] uppercase tracking-[0.22em] text-accent backdrop-blur">
             <Sparkles className="h-3 w-3" /> Edit ready
+          </div>
+        )}
+
+        {!playable && !yt && status === "ready" && (
+          <div className="pointer-events-none absolute bottom-3 left-3 inline-flex items-center gap-2 rounded border border-border/80 bg-background/70 px-2.5 py-1 text-[10px] uppercase tracking-[0.22em] text-muted-foreground backdrop-blur">
+            <Film className="h-3 w-3" /> Drop a file or paste a URL to preview
+          </div>
+        )}
+
+        {playable && nowPlaying && (
+          <div className="pointer-events-none absolute bottom-3 left-3 inline-flex items-center gap-2 rounded border border-accent/40 bg-background/70 px-2.5 py-1 text-[10px] uppercase tracking-[0.22em] text-accent backdrop-blur">
+            <Volume2 className="h-3 w-3" /> Playing source
           </div>
         )}
 

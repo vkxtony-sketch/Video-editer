@@ -4,10 +4,7 @@ import {
   ArrowLeft,
   Clock3,
   Cpu,
-  Eye,
-  Gauge,
-  History,
-  Play,
+  Download,
   RotateCcw,
   Trash2,
 } from "lucide-react";
@@ -27,6 +24,7 @@ export default function ProjectHeader({
   onRerun,
   onReset,
   demoMode,
+  onExport,
 }: {
   title: string;
   durationSec: number;
@@ -38,9 +36,22 @@ export default function ProjectHeader({
   onRerun: () => void;
   onReset: () => void;
   demoMode: boolean;
+  /** Real Export hook — receives the project meta. Defaults to a JSON EDL download. */
+  onExport?: (edl: ExportArtifact) => void;
 }) {
   const isProc = status === "processing";
   const isReady = status === "ready";
+
+  function handleExport() {
+    const artifact: ExportArtifact = {
+      schema: "neon-edl/v1",
+      generatedAt: new Date().toISOString(),
+      project: { title, durationSec, status, persona, summary },
+    };
+    if (onExport) onExport(artifact);
+    else defaultExportDownload(artifact);
+  }
+
   return (
     <div className="flex flex-wrap items-end justify-between gap-4 border-b border-border/60 px-5 py-4">
       <div className="min-w-0 flex-1">
@@ -102,11 +113,38 @@ export default function ProjectHeader({
         </Button>
         <Button
           disabled={!isReady}
+          onClick={handleExport}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
         >
-          <Play className="h-4 w-4" /> Export
+          <Download className="h-4 w-4" /> Export
         </Button>
       </div>
     </div>
   );
+}
+
+export type ExportArtifact = {
+  schema: "neon-edl/v1";
+  generatedAt: string;
+  project: {
+    title: string;
+    durationSec: number;
+    status: string;
+    persona?: string;
+    summary?: string;
+  };
+};
+
+function defaultExportDownload(artifact: ExportArtifact) {
+  const json = JSON.stringify(artifact, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  const safe = artifact.project.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "neon-edit";
+  a.download = `${safe}.neon-edl.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }

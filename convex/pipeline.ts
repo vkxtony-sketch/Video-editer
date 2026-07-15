@@ -1,10 +1,14 @@
 "use node";
-// Demo-grade AI pipeline. Marked "use node" so it runs server-side in Convex
-// and so we can later swap in real calls (Whisper / LLM / CV) without changing
-// the UI surface area. Heavy compute is NOT performed here — this stages
-// progress, then writes richly-seeded mock artifacts that look like real
-// analysis. Real model calling is left as a follow-up that the user can wire
-// through Convex action environment variables.
+// Neon AI Lab pipeline. This is a server-side Convex action that runs the
+// 7-stage AI pipeline. Heavy compute is NOT performed here — we use a
+// deterministic, project-aware generator that produces structured artifacts
+// shaped exactly the way real model calls would. Each project's title and
+// persona seed the generator, so two distinct projects produce distinct
+// highlights, captions, titles, etc.
+//
+// To upgrade a stage to a real model call, replace the corresponding
+// `pick*` helper with an `await fetch(...)` against the relevant API. The
+// Convex action runs in the "use node" runtime and can read process.env.
 
 import { v } from "convex/values";
 import { action } from "./_generated/server";
@@ -49,59 +53,146 @@ const STAGES: Stage[] = [
 ];
 
 function seedrand(seed: number) {
-  let s = seed;
+  let s = seed >>> 0;
   return () => {
     s = (s * 1664525 + 1013904223) % 4294967296;
     return s / 4294967296;
   };
 }
 
-function pickTitles(): string[] {
-  return [
-    "The single line that changed how I think about this",
-    "Why everything you’ve heard about this is wrong",
-    "The 90-second version nobody will tell you about",
-    "I tried this for 30 days. Here’s the data.",
-    "Three things I wish I knew before starting",
-    "Stop doing this immediately",
-    "The whole story in five minutes",
-    "What I learned shipping this to a million people",
-    "The cleanest explanation I can give",
-  ];
+// Stable, deterministic 32-bit hash of a string (FNV-1a). Used to turn a
+// project's title + persona into a seed that's unique per project but
+// reproducible across runs.
+function strHash(s: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
 }
 
-function pickHedlines(): { headline: string; sub: string }[] {
-  return [
-    { headline: "It actually works.", sub: "and here’s the receipts" },
-    { headline: "The whole story.", sub: "in under 5 minutes" },
-    { headline: "Don't scroll past this.", sub: "what nobody tells you" },
-    { headline: "I was wrong about this.", sub: "until I tried it" },
-    { headline: "Quietly life-changing.", sub: "watch till the end" },
-    { headline: "Twenty-four hours → five minutes.", sub: "AI did this" },
-  ];
+function pick<T>(rand: () => number, arr: T[]): T {
+  return arr[Math.floor(rand() * arr.length)];
 }
 
-function pickCaptions(durationSec: number): {
+// Pools are static but the seeds are project-aware, so each project gets
+// distinct output.
+const TITLE_POOL = [
+  "The single line that changed how I think about this",
+  "Why everything you've heard about this is wrong",
+  "The 90-second version nobody will tell you about",
+  "I tried this for 30 days. Here's the data.",
+  "Three things I wish I knew before starting",
+  "Stop doing this immediately",
+  "The whole story in five minutes",
+  "What I learned shipping this to a million people",
+  "The cleanest explanation I can give",
+  "One small change that moved every metric",
+  "The honest review no brand wants you to read",
+  "I rebuilt this twice. Here's what worked.",
+  "The thing nobody tells you about {topic}",
+  "Don't start this until you've watched the first 60 seconds",
+  "Five years of data, three minutes of conclusions",
+  "I tested every shortcut so you don't have to",
+  "The exact playbook I used to scale this",
+  "A real conversation about {topic}",
+  "What changed when I stopped overthinking it",
+  "The version I wish someone had sent me on day one",
+];
+
+const HEADLINE_POOL = [
+  { headline: "It actually works.", sub: "and here's the receipts" },
+  { headline: "The whole story.", sub: "in under five minutes" },
+  { headline: "Don't scroll past this.", sub: "what nobody tells you" },
+  { headline: "I was wrong about this.", sub: "until I tried it" },
+  { headline: "Quietly life-changing.", sub: "watch till the end" },
+  { headline: "Twenty-four hours → five minutes.", sub: "the AI did this" },
+  { headline: "The breakthrough everyone missed.", sub: "until now" },
+  { headline: "I built the thing I wish existed.", sub: "and it's free" },
+];
+
+const CAPTION_TEMPLATES = [
+  "Alright let me just dive in.",
+  "So here's the thing — nobody talks about this.",
+  "I tried it for thirty days.",
+  "And the result kind of broke my brain.",
+  "Wait — hold on — let me back up.",
+  "So the first thing you need to know is…",
+  "Most people get this fundamentally wrong.",
+  "You don't need to spend money, you don't need to grind.",
+  "But you DO need to do this one thing every single day.",
+  "If you take one thing away — let it be that.",
+  "Alright so let me show you exactly how I do it.",
+  "The numbers behind this are wild.",
+  "And here is where it gets interesting.",
+  "Look — I'm not going to dress this up.",
+  "The truth is the opposite of what most people say.",
+  "This is the part that surprised me the most.",
+  "Let me show you the receipts.",
+  "If you remember nothing else, remember this.",
+];
+
+const HIGHLIGHT_RATIONALES = [
+  "Strong narrative payoff, high energy delta, faces present.",
+  "Quantified hook + retention signal; ideal short candidate.",
+  "Speaker introduces a counter-intuitive claim — high curiosity drop.",
+  "Visual change of pace; new framing appears in this window.",
+  "Audience laughter or applause detected — peak engagement.",
+  "Topic shift + chapter boundary; natural break for a chapter card.",
+  "Confessional tone shift; emotional peak for story-led edits.",
+  "Quoted statistic or named source — quotability score high.",
+  "Action/visual hook + bold on-screen motion; vertical-native fit.",
+  "Compressed recap — best highlight for a 60-second summary.",
+];
+
+const TAGS = [
+  "viral-hook",
+  "story-payoff",
+  "controversial",
+  "warm-take",
+  "data-drop",
+  "how-to",
+  "candid",
+  "surprise",
+  "educational",
+  "energy-spike",
+];
+
+// Replace {topic} placeholders using the project title for personalization.
+function personalize(s: string, topic: string): string {
+  return s.replace(/\{topic\}/g, topic);
+}
+
+function pickTitles(seed: number, title: string): string[] {
+  const rand = seedrand(seed);
+  const topic = title.split(/\s+/).slice(0, 3).join(" ").toLowerCase();
+  return TITLE_POOL.map((t) => personalize(t, topic))
+    .sort(() => rand() - 0.5)
+    .slice(0, 9);
+}
+
+function pickHeadlines(seed: number, title: string): { headline: string; sub: string }[] {
+  const rand = seedrand(seed);
+  const topic = title.split(/\s+/).slice(0, 3).join(" ").toLowerCase();
+  return HEADLINE_POOL.map((h) => ({
+    headline: personalize(h.headline, topic),
+    sub: personalize(h.sub, topic),
+  }))
+    .sort(() => rand() - 0.5)
+    .slice(0, 6);
+}
+
+function pickCaptions(durationSec: number, seed: number): {
   startSec: number;
   endSec: number;
   speaker: string;
   text: string;
   sentiment: string;
 }[] {
-  const sample = [
-    { s: "Speaker A", text: "Alright let me just dive in.", sentiment: "neutral" },
-    { s: "Speaker A", text: "So here’s the thing — nobody talks about this.", sentiment: "curious" },
-    { s: "Speaker A", text: "I tried it for thirty days.", sentiment: "calm" },
-    { s: "Speaker A", text: "And the result kind of broke my brain.", sentiment: "surprised" },
-    { s: "Speaker A", text: "Wait — hold on — let me back up.", sentiment: "nervous" },
-    { s: "Speaker A", text: "So the first thing you need to know is…", sentiment: "calm" },
-    { s: "Speaker A", text: "Most people get this fundamentally wrong.", sentiment: "intense" },
-    { s: "Speaker A", text: "You don’t need to spend money, you don’t need to grind.", sentiment: "calm" },
-    { s: "Speaker A", text: "But you DO need to do this one thing every single day.", sentiment: "intense" },
-    { s: "Speaker A", text: "If you take one thing away — let it be that.", sentiment: "warm" },
-    { s: "Speaker A", text: "Alright so let me show you exactly how I do it.", sentiment: "calm" },
-  ];
-  const rand = seedrand(durationSec + 17);
+  const rand = seedrand(seed + 17);
+  const sample = CAPTION_TEMPLATES;
+  const sentiments = ["neutral", "curious", "calm", "surprised", "intense", "warm"];
   const out: {
     startSec: number;
     endSec: number;
@@ -110,73 +201,69 @@ function pickCaptions(durationSec: number): {
     sentiment: string;
   }[] = [];
   let t = 60 + rand() * 90;
-  for (let i = 0; i < 28; i++) {
+  const count = Math.max(8, Math.min(40, Math.floor(durationSec / 240)));
+  for (let i = 0; i < count; i++) {
     const line = sample[Math.floor(rand() * sample.length)];
     const dur = 4 + rand() * 7;
     out.push({
       startSec: Math.floor(t),
       endSec: Math.floor(t + dur),
-      speaker: line.s,
-      text: line.text,
-      sentiment: line.sentiment,
+      speaker: i % 4 === 0 ? "Speaker B" : "Speaker A",
+      text: line,
+      sentiment: sentiments[Math.floor(rand() * sentiments.length)],
     });
     t += dur + (0.2 + rand() * 1.2);
   }
   return out;
 }
 
-function pickClips(durationSec: number) {
-  const rand = seedrand(durationSec + 5);
-  const titles = pickTitles();
-  const tags = [
-    "viral-hook",
-    "story-payoff",
-    "controversial",
-    "warm-take",
-    "data-drop",
-    "how-to",
-    "candid",
-    "surprise",
-    "educational",
-    "energy-spike",
-  ];
+function pickClips(durationSec: number, seed: number, projectId: Id<"projects">) {
+  const rand = seedrand(seed + 5);
   const total = 12;
   const out = [];
   for (let i = 0; i < total; i++) {
     const start = Math.floor(120 + rand() * Math.max(120, durationSec - 240));
     const len = Math.floor(40 + rand() * 220);
     out.push({
+      projectId,
       kind: "highlight" as const,
-      title: titles[i % titles.length],
+      title: TITLE_POOL[i % TITLE_POOL.length],
       startSec: start,
       endSec: start + len,
       score: Math.round((0.55 + rand() * 0.45) * 100) / 100,
-      rationale:
-        rand() > 0.5
-          ? "Strong narrative payoff, high energy delta, faces present."
-          : "Quantified hook + retention signal; ideal short candidate.",
-      tags: [tags[i % tags.length], tags[(i + 3) % tags.length]],
+      rationale: pick(rand, HIGHLIGHT_RATIONALES),
+      tags: [TAGS[i % TAGS.length], TAGS[(i + 3) % TAGS.length]],
       createdAt: Date.now(),
     });
   }
   return out;
 }
 
-function pickShorts(durationSec: number) {
-  const rand = seedrand(durationSec + 11);
+function pickShorts(durationSec: number, seed: number, projectId: Id<"projects">) {
+  const rand = seedrand(seed + 11);
+  const prompts = [
+    "POV:",
+    "Wait for it…",
+    "Watch this part only.",
+    "Listen closely.",
+    "This one line.",
+    "Don't skip this.",
+    "The ending.",
+    "60-second version.",
+  ];
   const out = [];
   for (let i = 0; i < 8; i++) {
     const start = Math.floor(180 + rand() * Math.max(180, durationSec - 360));
     const len = 20 + Math.floor(rand() * 70);
     out.push({
+      projectId,
       kind: "short" as const,
-      title: ["POV:", "Wait for it…", "Watch this part only.", "Listen closely.",
-        "This one line.", "Don't skip this.", "The ending.", "60-second version."
-      ][i],
+      title: prompts[i],
       startSec: start,
       endSec: start + len,
       score: Math.round((0.6 + rand() * 0.4) * 100) / 100,
-      rationale: "Vertical-native hook with face-tracked speaker and crisp CTA moments.",
+      rationale:
+        "Vertical-native hook with face-tracked speaker and crisp CTA moments.",
       tags: ["vertical", "short-form", "viral"],
       createdAt: Date.now(),
     });
@@ -184,9 +271,9 @@ function pickShorts(durationSec: number) {
   return out;
 }
 
-function pickChapters(durationSec: number) {
+function pickChapters(durationSec: number, seed: number, projectId: Id<"projects">) {
   if (durationSec < 600) return [];
-  const rand = seedrand(durationSec + 23);
+  const rand = seedrand(seed + 23);
   const chapterLabels = [
     "Setup · Why this matters",
     "First principle",
@@ -203,6 +290,7 @@ function pickChapters(durationSec: number) {
   for (let i = 0; i < count; i++) {
     const dur = Math.floor(durationSec / count);
     out.push({
+      projectId,
       kind: "chapter" as const,
       title: chapterLabels[i],
       startSec: t,
@@ -218,14 +306,15 @@ function pickChapters(durationSec: number) {
   return out;
 }
 
-function pickCuts(durationSec: number) {
-  const rand = seedrand(durationSec + 41);
+function pickCuts(durationSec: number, seed: number, projectId: Id<"projects">) {
+  const rand = seedrand(seed + 41);
   const out = [];
   const count = Math.min(60, Math.max(8, Math.floor(durationSec / 360)));
   let t = 30;
   for (let i = 0; i < count; i++) {
     const dur = 1 + Math.floor(rand() * 6);
     out.push({
+      projectId,
       kind: "cut" as const,
       title: dur > 3 ? "Long dead pause" : "Micro-pause",
       startSec: t,
@@ -265,6 +354,10 @@ export const runPipeline = action({
       progress: 1,
     });
 
+    // Project-aware seed: same project always produces the same artifacts,
+    // but different projects produce different artifacts.
+    const seed = strHash(`${project.title}|${project.persona ?? ""}|${project.durationSec}`);
+
     let progress = 0;
     for (let i = 0; i < STAGES.length; i++) {
       const stage = STAGES[i];
@@ -277,7 +370,6 @@ export const runPipeline = action({
         ts: Date.now(),
       });
 
-      // Simulate work — chunked for visible progress
       const ticks = 6;
       for (let t = 0; t < ticks; t++) {
         await sleep(stage.durationMs / ticks);
@@ -300,20 +392,17 @@ export const runPipeline = action({
       });
     }
 
-    const projectIdStr = args.projectId;
-    const clips = pickClips(project.durationSec).map((c) => ({ ...c, projectId: projectIdStr }));
-    const shorts = pickShorts(project.durationSec).map((c) => ({ ...c, projectId: projectIdStr }));
-    const chapters = pickChapters(project.durationSec).map((c) => ({ ...c, projectId: projectIdStr }));
-    const cuts = pickCuts(project.durationSec).map((c) => ({ ...c, projectId: projectIdStr }));
-
-    try { void clips; } catch (_) { /* no-op */ }
+    const clips = pickClips(project.durationSec, seed, args.projectId);
+    const shorts = pickShorts(project.durationSec, seed, args.projectId);
+    const chapters = pickChapters(project.durationSec, seed, args.projectId);
+    const cuts = pickCuts(project.durationSec, seed, args.projectId);
 
     await ctx.runMutation(api.pipelineHelpers._writeArtifacts, {
       projectId: args.projectId,
       clips: [...clips, ...shorts, ...chapters, ...cuts],
     });
 
-    const titles = pickTitles().slice(0, 5).map((body, i) => ({
+    const titles = pickTitles(seed, project.title).slice(0, 5).map((body, i) => ({
       projectId: args.projectId,
       label: ["YouTube Title", "TikTok Caption", "X Hook", "LinkedIn Title", "Newsletter Subject"][i],
       body,
@@ -325,7 +414,7 @@ export const runPipeline = action({
       titles,
     });
 
-    const thumbs = pickHedlines().map((h, i) => ({
+    const thumbs = pickHeadlines(seed, project.title).map((h, i) => ({
       projectId: args.projectId,
       headline: h.headline,
       subtext: h.sub,
@@ -337,7 +426,7 @@ export const runPipeline = action({
       thumbnails: thumbs,
     });
 
-    const captions = pickCaptions(project.durationSec).map((c) => ({
+    const captions = pickCaptions(project.durationSec, seed).map((c) => ({
       ...c,
       projectId: args.projectId,
     }));
