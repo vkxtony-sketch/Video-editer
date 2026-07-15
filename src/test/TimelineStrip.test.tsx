@@ -110,4 +110,35 @@ describe("TimelineStrip", () => {
     const markers = container.querySelectorAll('[data-testid="scene-marker"]');
     expect(markers.length).toBe(2);
   });
+
+  it("pulses the playhead when isPlaying=true", () => {
+    const { container } = render(
+      <TimelineStrip
+        durationSec={12 * 3600}
+        clips={clips}
+        activeClipId={null}
+        scrubToSec={6 * 3600}
+        isPlaying
+        onScrub={() => {}}
+      />,
+    );
+    const playhead = container.querySelector('[data-testid="timeline-playhead"]');
+    expect(playhead).toBeTruthy();
+    expect(playhead?.className).toMatch(/animate-pulse-soft/);
+  });
+
+  it("does NOT pulse the playhead when isPlaying is omitted", () => {
+    const { container } = render(
+      <TimelineStrip
+        durationSec={12 * 3600}
+        clips={clips}
+        activeClipId={null}
+        scrubToSec={null}
+        onScrub={() => {}}
+      />,
+    );
+    const playhead = container.querySelector('[data-testid="timeline-playhead"]');
+    expect(playhead).toBeTruthy();
+    expect(playhead?.className).not.toMatch(/animate-pulse-soft/);
+  });
 });

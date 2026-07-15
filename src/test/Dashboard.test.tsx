@@ -41,6 +41,7 @@ describe("Dashboard", () => {
         createdAt: Date.now(),
         updatedAt: Date.now(),
         ownerId: "u_test_session",
+        coverThumb: null,
       },
     ]);
     renderDashboard();
@@ -48,6 +49,52 @@ describe("Dashboard", () => {
     expect(screen.getByText(/12:00:00/)).toBeInTheDocument();
     expect(screen.getByText(/12\s+highlights/i)).toBeInTheDocument();
     expect(screen.getByText(/Ready/i)).toBeInTheDocument();
+  });
+
+  it("renders a real-frame cover when coverThumb is provided", () => {
+    convexMock.query("projects:list", [
+      {
+        _id: "p_cover1",
+        title: "Vlog daily",
+        durationSec: 60 * 60,
+        status: "ready" as const,
+        progress: 100,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        ownerId: "u_test_session",
+        coverThumb: {
+          headline: "Peak at 0:04:32",
+          // 1×1 transparent PNG so jsdom doesn't complain
+          imageDataUrl:
+            "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+        },
+      },
+    ]);
+    renderDashboard();
+    const cover = screen.getByTestId("project-cover");
+    expect(cover).toBeInTheDocument();
+    expect(cover.tagName).toBe("IMG");
+    expect((cover as HTMLImageElement).src).toContain("data:image/png");
+    expect(screen.getByText(/Real frame/i)).toBeInTheDocument();
+  });
+
+  it("omits the cover image but still renders the card when coverThumb is null", () => {
+    convexMock.query("projects:list", [
+      {
+        _id: "p_nocover",
+        title: "Demo source",
+        durationSec: 12 * 3600,
+        status: "ready" as const,
+        progress: 100,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        ownerId: "u_test_session",
+        coverThumb: null,
+      },
+    ]);
+    renderDashboard();
+    expect(screen.queryByTestId("project-cover")).toBeNull();
+    expect(screen.getByText("Demo source")).toBeInTheDocument();
   });
 
   it("clicking Delete calls api.projects.remove with the project id", async () => {

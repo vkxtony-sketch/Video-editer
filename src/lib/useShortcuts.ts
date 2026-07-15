@@ -7,6 +7,7 @@ import { useEffect } from "react";
 export type ShortcutAction =
   | { type: "toggle-play" }
   | { type: "seek"; deltaSec: number }
+  | { type: "frame-step"; direction: 1 | -1 }
   | { type: "select-highlight"; index: number }
   | { type: "mute" }
   | { type: "fullscreen" }
@@ -42,6 +43,10 @@ export function matchKey(
       return { type: "seek", deltaSec: -5 };
     case "KeyL":
       return { type: "seek", deltaSec: 5 };
+    case "Comma":
+      return { type: "frame-step", direction: -1 };
+    case "Period":
+      return { type: "frame-step", direction: 1 };
     case "ArrowLeft":
       return { type: "seek", deltaSec: e.shiftKey ? -30 : -5 };
     case "ArrowRight":

@@ -42,11 +42,34 @@ export const list = query({
   args: { ownerId: v.optional(v.string()) },
   handler: async (ctx, args) => {
     const ownerId = args.ownerId ?? "any";
-    return await ctx.db
+    const projects = await ctx.db
       .query("projects")
       .withIndex("by_owner", (q) => q.eq("ownerId", ownerId))
       .order("desc")
       .collect();
+    // Fetch the highest-scoring thumbnail per project inline so the
+    // Dashboard can render a real cover image without N+1 round-trips.
+    const withCovers = await Promise.all(
+      projects.map(async (p) => {
+        const thumbs = await ctx.db
+          .query("thumbnails")
+          .withIndex("by_project", (q) => q.eq("projectId", p._id))
+          .collect();
+        // Prefer real JPEG frames; fall back to any thumbnail with a frame.
+        const withFrame = thumbs.filter((t) => !!t.imageDataUrl);
+        const ranked = (withFrame.length > 0 ? withFrame : thumbs).sort(
+          (a, b) => b.score - a.score,
+        );
+        const top = ranked[0];
+        return {
+          ...p,
+          coverThumb: top?.imageDataUrl
+            ? { headline: top.headline, imageDataUrl: top.imageDataUrl }
+            : null,
+        };
+      }),
+    );
+    return withCovers;
   },
 });
 

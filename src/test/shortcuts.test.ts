@@ -26,6 +26,10 @@ describe("matchKey", () => {
   it("maps L → seek +5", () => {
     expect(matchKey(fakeKeyEvent("KeyL"), ctx)).toEqual({ type: "seek", deltaSec: 5 });
   });
+  it("maps Comma / Period → frame-step ±1", () => {
+    expect(matchKey(fakeKeyEvent("Comma"), ctx)).toEqual({ type: "frame-step", direction: -1 });
+    expect(matchKey(fakeKeyEvent("Period"), ctx)).toEqual({ type: "frame-step", direction: 1 });
+  });
   it("maps ArrowLeft → seek -5 (and Shift+Arrow → seek -30)", () => {
     expect(matchKey(fakeKeyEvent("ArrowLeft"), ctx)).toEqual({ type: "seek", deltaSec: -5 });
     expect(matchKey(fakeKeyEvent("ArrowLeft", { shiftKey: true }), ctx)).toEqual({ type: "seek", deltaSec: -30 });

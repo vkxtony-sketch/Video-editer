@@ -25,8 +25,11 @@ import {
   useStudioShortcuts,
   type ShortcutAction,
 } from "@/lib/useShortcuts";
-
-const TAB_ORDER: StudioTab[] = ["titles", "thumbs", "captions"];
+import {
+  TAB_ORDER,
+  buildUrlState,
+  readUrlState,
+} from "@/lib/urlStudioState";
 
 function nextTab(tab: StudioTab): StudioTab {
   const i = TAB_ORDER.indexOf(tab);
@@ -54,7 +57,9 @@ export default function Studio() {
   const [scrubToSec, setScrubToSec] = useState<number | null>(null);
   const [startedOnce, setStartedOnce] = useState(false);
   const [audioScanRunning, setAudioScanRunning] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
   const audioScanStartedRef = useRef<string | null>(null);
+  const urlHydratedRef = useRef(false);
 
   // Persistent tab + highlight selection (per-project).
   const [prefs, setPrefs] = useStudioPrefs(projectId);
@@ -62,7 +67,19 @@ export default function Studio() {
   // Imperative video control handle for keyboard shortcuts.
   const videoRef = useRef<VideoControlRef | null>(null);
 
-  // Restore last selected highlight when project loads.
+  // Hydrate tab/highlight/scrub from the URL on first render — shareable
+  // links win over the local-storage default.
+  useEffect(() => {
+    if (urlHydratedRef.current) return;
+    urlHydratedRef.current = true;
+    const u = readUrlState();
+    if (u.tab) setPrefs({ tab: u.tab });
+    if (u.highlightId) setPrefs({ highlightId: u.highlightId });
+    if (u.scrubToSec != null) setScrubToSec(u.scrubToSec);
+  }, [setPrefs]);
+
+  // Restore last selected highlight when project loads (local-storage fallback
+  // after URL hydration has had its turn).
   useEffect(() => {
     if (!project) return;
     if (!clips) return;
@@ -75,6 +92,23 @@ export default function Studio() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [project?._id, clips === undefined]);
 
+  // Sync {tab, highlightId, scrubToSec} to the URL via replaceState so it can
+  // be shared without a router navigation.
+  useEffect(() => {
+    if (!project) return;
+    const qs = buildUrlState({
+      tab: prefs.tab,
+      highlightId: activeClip,
+      scrubToSec,
+    });
+    if (typeof window === "undefined") return;
+    const next = `${window.location.pathname}${qs}`;
+    const current = `${window.location.pathname}${window.location.search}`;
+    if (next !== current) {
+      window.history.replaceState(null, "", next);
+    }
+  }, [project?._id, prefs.tab, activeClip, scrubToSec, project]);
+
   // Persist tab selection.
   const handleTabChange = useCallback(
     (v: StudioTab) => setPrefs({ tab: v }),
@@ -85,7 +119,8 @@ export default function Studio() {
   const handleSelectHighlight = useCallback(
     (it: HighlightItem) => {
       setActiveClip(it._id);
-      setScrubToSec(Math.floor((it.startSec + it.endSec) / 2));
+      const mid = Math.floor((it.startSec + it.endSec) / 2);
+      setScrubToSec(mid);
       setPrefs({ highlightId: it._id });
     },
     [setPrefs],
@@ -153,13 +188,15 @@ export default function Studio() {
           if (v) {
             v.seekBy(a.deltaSec);
           } else {
-            const next =
-              (scrubToSec ?? 0) + a.deltaSec;
+            const next = (scrubToSec ?? 0) + a.deltaSec;
             setScrubToSec(Math.max(0, Math.min(project?.durationSec ?? 0, next)));
             setActiveClip(null);
           }
           break;
         }
+        case "frame-step":
+          videoRef.current?.stepFrame(a.direction);
+          break;
         case "select-highlight": {
           const it = highlightItems[a.index];
           if (it) handleSelectHighlight(it);
@@ -257,6 +294,7 @@ export default function Studio() {
               activeStage={activeStage}
               status={project.status}
               scrubToSec={scrubToSec}
+              onPlayChange={setIsPlaying}
             />
           </div>
           <div className="flex-[1] min-h-[220px] overflow-hidden rounded-xl border border-border/70 bg-card/60">
@@ -292,6 +330,7 @@ export default function Studio() {
           sceneMarks={nestedSceneMarks}
           activeClipId={activeClipObj?._id ?? null}
           scrubToSec={scrubToSec}
+          isPlaying={isPlaying}
           onScrub={(s) => {
             setScrubToSec(s);
             setActiveClip(null);
@@ -300,15 +339,31 @@ export default function Studio() {
         />
       </div>
 
-      <ShortcutLegend highlightCount={derivedHighs.length} />
+      <ShortcutLegend
+        highlightCount={derivedHighs.length}
+        onShare={() => {
+          if (typeof window === "undefined") return;
+          const url = window.location.href;
+          if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(url).catch(() => {});
+          }
+        }}
+      />
     </div>
   );
 }
 
-function ShortcutLegend({ highlightCount }: { highlightCount: number }) {
+function ShortcutLegend({
+  highlightCount,
+  onShare,
+}: {
+  highlightCount: number;
+  onShare: () => void;
+}) {
   const keys: { keys: string; label: string }[] = [
     { keys: "Space / K", label: "Play / Pause" },
     { keys: "J / L", label: "Seek ±5s" },
+    { keys: ", / .", label: "Frame step" },
     { keys: "← / →", label: "Seek ±5s" },
     { keys: "⇧ ← / →", label: "Seek ±30s" },
     { keys: "↑ / ↓", label: "Switch tab" },
@@ -333,6 +388,14 @@ function ShortcutLegend({ highlightCount }: { highlightCount: number }) {
           <span>{k.label}</span>
         </span>
       ))}
+      <button
+        onClick={onShare}
+        data-testid="copy-share-link"
+        className="ml-auto inline-flex items-center gap-1.5 rounded border border-border/80 bg-secondary/60 px-2 py-1 text-[10px] text-foreground hover:border-accent/60 hover:text-accent"
+        title="Copy a shareable link to this exact view (tab + highlight + scrub position)"
+      >
+        <span className="font-mono">⌘</span>Copy share link
+      </button>
     </div>
   );
 }

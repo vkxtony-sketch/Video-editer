@@ -25,6 +25,7 @@ export default function TimelineStrip({
   sceneMarks,
   activeClipId,
   scrubToSec,
+  isPlaying,
   onScrub,
 }: {
   durationSec: number;
@@ -32,6 +33,8 @@ export default function TimelineStrip({
   sceneMarks?: SceneMark[];
   activeClipId: string | null;
   scrubToSec: number | null;
+  /** When true, animate the playhead with a subtle pulse. */
+  isPlaying?: boolean;
   onScrub: (sec: number) => void;
 }) {
   const total = Math.max(durationSec, 60);
@@ -182,9 +185,12 @@ export default function TimelineStrip({
               />
             );
           })}
-          {/* playhead */}
+          {/* playhead — pulses when source is actively playing. */}
           <div
-            className="pointer-events-none absolute top-0 h-full w-px bg-foreground shadow-[0_0_8px_rgba(255,255,255,0.8)]"
+            className={`pointer-events-none absolute top-0 h-full w-px bg-foreground shadow-[0_0_8px_rgba(255,255,255,0.8)] ${
+              isPlaying ? "animate-pulse-soft" : ""
+            }`}
+            data-testid="timeline-playhead"
             style={{ left: `${playhead * 100}%` }}
           />
         </div>

@@ -223,18 +223,19 @@ export default function Dashboard() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ delay: i * 0.04, duration: 0.4 }}
               >
-                <ProjectCard
-                  id={p._id}
-                  title={p.title}
-                  durationSec={p.durationSec}
-                  status={p.status}
-                  progress={p.progress}
-                  summary={p.summary}
-                  persona={p.persona}
-                  source={p.source}
-                  onOpen={() => navigate(`/studio/${p._id}`)}
-                  onDelete={() => handleDelete(p._id)}
-                />
+              <ProjectCard
+                id={p._id}
+                title={p.title}
+                durationSec={p.durationSec}
+                status={p.status}
+                progress={p.progress}
+                summary={p.summary}
+                persona={p.persona}
+                source={p.source}
+                coverThumb={p.coverThumb ?? null}
+                onOpen={() => navigate(`/studio/${p._id}`)}
+                onDelete={() => handleDelete(p._id)}
+              />
               </motion.div>
             ))}
           </div>
@@ -285,6 +286,7 @@ function ProjectCard({
   summary,
   persona,
   source,
+  coverThumb,
   onOpen,
   onDelete,
 }: {
@@ -296,6 +298,7 @@ function ProjectCard({
   summary?: string;
   persona?: string;
   source?: "upload" | "url" | "demo" | "sample";
+  coverThumb?: { headline: string; imageDataUrl: string } | null;
   onOpen: () => void;
   onDelete: () => void;
 }) {
@@ -307,6 +310,22 @@ function ProjectCard({
   } as const;
   return (
     <div className="group relative overflow-hidden rounded-xl border border-border/70 bg-card/60 backdrop-blur transition hover:border-primary/40 hover:shadow-[0_0_40px_-20px_rgba(0,243,255,0.7)]">
+      {/* Real cover thumbnail if one was captured during analysis. */}
+      {coverThumb?.imageDataUrl && (
+        <div className="relative aspect-video w-full overflow-hidden border-b border-border/60 bg-[#06070d]">
+          <img
+            src={coverThumb.imageDataUrl}
+            alt={coverThumb.headline || title}
+            loading="lazy"
+            data-testid="project-cover"
+            className="h-full w-full object-cover transition duration-500 group-hover:scale-[1.03]"
+          />
+          <div className="pointer-events-none absolute inset-0 bg-gradient-to-t from-background/85 via-background/20 to-transparent" />
+          <span className="pointer-events-none absolute bottom-2 left-2 inline-flex items-center gap-1 rounded border border-accent/40 bg-background/70 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.22em] text-accent backdrop-blur">
+            Real frame
+          </span>
+        </div>
+      )}
       <button onClick={onOpen} className="block w-full p-5 text-left">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">

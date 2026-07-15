@@ -9,6 +9,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import {
   Cpu,
   Film,
+  Pause,
   Play,
   ScanLine,
   Sparkles,
@@ -36,10 +37,16 @@ export type VideoControlRef = {
   setMuted: (muted: boolean | null) => void;
   /** Best-effort fullscreen on the video element. */
   requestFullscreen: () => Promise<void>;
+  /** Set playback rate (e.g. 0.25, 0.5, 1, 1.5, 2). */
+  setPlaybackRate: (rate: number) => void;
+  /** Step a single video frame. `frames` defaults to +1, pass negative to step back. */
+  stepFrame: (frames?: number) => void;
   /** Returns the current playback time in seconds. */
   currentTime: () => number;
   /** Returns the total duration. */
   duration: () => number;
+  /** Returns whether the video is currently playing. */
+  isPlaying: () => boolean;
 };
 
 export type PreviewProps = {
@@ -50,6 +57,10 @@ export type PreviewProps = {
   activeStage: string;
   status: "queued" | "processing" | "ready" | "failed";
   scrubToSec: number | null;
+  /** Notifies parent so downstream UI (TimelineStrip) can pulse the playhead. */
+  onPlayChange?: (playing: boolean) => void;
+  /** Imperative playback-speed setter; optional. */
+  initialPlaybackRate?: number;
 };
 
 function youtubeId(url?: string): string | null {
@@ -66,6 +77,9 @@ function isPlayableVideo(url?: string): boolean {
   return /\.(mp4|mov|webm|m4v|mkv|avi)(\?|$)/i.test(url);
 }
 
+const SPEED_OPTIONS = [0.25, 0.5, 1, 1.5, 2] as const;
+const FRAME_STEP_SEC = 1 / 30; // assume ~30fps; close enough for a step button
+
 const VideoPreview = forwardRef<VideoControlRef, PreviewProps>(function VideoPreview(
   {
     videoUrl,
@@ -75,6 +89,8 @@ const VideoPreview = forwardRef<VideoControlRef, PreviewProps>(function VideoPre
     activeStage,
     status,
     scrubToSec,
+    onPlayChange,
+    initialPlaybackRate,
   },
   ref,
 ) {
@@ -85,11 +101,27 @@ const VideoPreview = forwardRef<VideoControlRef, PreviewProps>(function VideoPre
   const [muted, setMuted] = useState(true); // start muted; user can press M
   const [currentTime, setCurrentTime] = useState(0);
   const [waveform, setWaveform] = useState<Waveform | null>(null);
+  const [playbackRate, setPlaybackRate] = useState(
+    initialPlaybackRate ?? 1,
+  );
+  const [pausedFlash, setPausedFlash] = useState(false);
 
   useEffect(() => {
     const id = window.setInterval(() => setTick((t) => t + 1), 80);
     return () => window.clearInterval(id);
   }, []);
+
+  // Bubble playback state up to the parent for the TimelineStrip pulse.
+  useEffect(() => {
+    onPlayChange?.(nowPlaying);
+  }, [nowPlaying, onPlayChange]);
+
+  // Apply playback rate changes to the <video> element.
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    v.playbackRate = playbackRate;
+  }, [playbackRate]);
 
   const yt = youtubeId(videoUrl);
   const playable = !yt && isPlayableVideo(videoUrl);
@@ -155,6 +187,19 @@ const VideoPreview = forwardRef<VideoControlRef, PreviewProps>(function VideoPre
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrubToSec, playable]);
 
+  function stepFrameLocal(frames: number = 1) {
+    const v = videoRef.current;
+    if (!v) return;
+    const next = Math.max(
+      0,
+      Math.min(total, v.currentTime + frames * FRAME_STEP_SEC),
+    );
+    v.currentTime = next;
+    setCurrentTime(next);
+    setPausedFlash(true);
+    window.setTimeout(() => setPausedFlash(false), 600);
+  }
+
   // Expose imperative video controls to the parent for keyboard shortcuts.
   useImperativeHandle(
     ref,
@@ -198,11 +243,23 @@ const VideoPreview = forwardRef<VideoControlRef, PreviewProps>(function VideoPre
         if (!v) return;
         if (v.requestFullscreen) await v.requestFullscreen();
       },
+      setPlaybackRate: (rate) => {
+        setPlaybackRate(rate);
+      },
+      stepFrame: (frames = 1) => stepFrameLocal(frames),
       currentTime: () => videoRef.current?.currentTime ?? 0,
       duration: () => videoRef.current?.duration ?? 0,
+      isPlaying: () => !videoRef.current?.paused,
     }),
     [total],
   );
+
+  function togglePlay() {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) void v.play().catch(() => {});
+    else v.pause();
+  }
 
   return (
     <div className="relative h-full overflow-hidden rounded-xl border border-border/70 bg-card/60">
@@ -302,12 +359,77 @@ const VideoPreview = forwardRef<VideoControlRef, PreviewProps>(function VideoPre
 
         {/* Waveform canvas — only meaningful when an audio source is loaded. */}
         {playable && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12">
+          <div className="pointer-events-none absolute inset-x-0 bottom-12">
             <canvas
               ref={canvasRef}
-              className="block h-full w-full"
+              className="block h-12 w-full"
               data-testid="waveform-canvas"
             />
+          </div>
+        )}
+
+        {/* Playback control row. Hidden behind a faint glass panel. */}
+        {playable && (
+          <div
+            data-testid="playback-controls"
+            className="absolute bottom-12 left-3 right-3 z-10 flex items-center gap-1.5 rounded-md border border-border/60 bg-background/70 px-2 py-1.5 text-[10px] uppercase tracking-[0.18em] backdrop-blur"
+          >
+            <button
+              onClick={togglePlay}
+              data-testid="play-toggle"
+              className="grid h-7 w-7 place-items-center rounded border border-primary/40 bg-primary/10 text-primary transition hover:border-primary/60 hover:bg-primary/20"
+              aria-label={nowPlaying ? "Pause" : "Play"}
+            >
+              {nowPlaying ? (
+                <Pause className="h-3.5 w-3.5" />
+              ) : (
+                <Play className="h-3.5 w-3.5" />
+              )}
+            </button>
+            <button
+              onClick={() => stepFrameLocal(-1)}
+              data-testid="frame-back"
+              className="grid h-7 w-7 place-items-center rounded border border-border/80 bg-secondary/60 text-foreground transition hover:border-accent/60 hover:text-accent"
+              aria-label="Previous frame"
+              title="Previous frame (,)"
+            >
+              <span className="font-mono text-[10px]">⟨|</span>
+            </button>
+            <button
+              onClick={() => stepFrameLocal(1)}
+              data-testid="frame-forward"
+              className="grid h-7 w-7 place-items-center rounded border border-border/80 bg-secondary/60 text-foreground transition hover:border-accent/60 hover:text-accent"
+              aria-label="Next frame"
+              title="Next frame (.)"
+            >
+              <span className="font-mono text-[10px]">|⟩</span>
+            </button>
+            <div className="mx-1 h-4 w-px bg-border/60" />
+            <span className="font-mono text-[9px] text-muted-foreground">Speed</span>
+            {SPEED_OPTIONS.map((r) => (
+              <button
+                key={r}
+                onClick={() => setPlaybackRate(r)}
+                data-testid={`speed-${r}`}
+                className={`rounded border px-1.5 py-0.5 font-mono text-[10px] transition ${
+                  Math.abs(playbackRate - r) < 1e-3
+                    ? "border-accent/70 bg-accent/15 text-accent"
+                    : "border-border/80 bg-secondary/40 text-muted-foreground hover:border-border hover:text-foreground"
+                }`}
+                aria-pressed={Math.abs(playbackRate - r) < 1e-3}
+                title={`${r}× playback`}
+              >
+                {r}×
+              </button>
+            ))}
+          </div>
+        )}
+
+        {pausedFlash && playable && (
+          <div className="pointer-events-none absolute inset-0 grid place-items-center">
+            <div className="rounded-full border border-accent/40 bg-background/70 px-3 py-1.5 text-[10px] uppercase tracking-[0.22em] text-accent backdrop-blur">
+              Frame step
+            </div>
           </div>
         )}
 
