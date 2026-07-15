@@ -24,6 +24,7 @@ export default function ProjectHeader({
   onRerun,
   onReset,
   demoMode,
+  source,
   onExport,
 }: {
   title: string;
@@ -36,6 +37,7 @@ export default function ProjectHeader({
   onRerun: () => void;
   onReset: () => void;
   demoMode: boolean;
+  source?: "upload" | "url" | "demo" | "sample";
   /** Real Export hook — receives the project meta. Defaults to a JSON EDL download. */
   onExport?: (edl: ExportArtifact) => void;
 }) {
@@ -73,7 +75,12 @@ export default function ProjectHeader({
               {persona}
             </Badge>
           )}
-          {demoMode && (
+          {source === "upload" && (
+            <Badge variant="outline" className="border-accent/40 bg-accent/10 text-accent">
+              Real analysis · browser-side
+            </Badge>
+          )}
+          {demoMode && source !== "upload" && (
             <Badge variant="outline" className="border-accent/40 text-accent">
               Demo · simulated pipeline
             </Badge>

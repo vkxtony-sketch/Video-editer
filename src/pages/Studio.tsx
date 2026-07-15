@@ -34,11 +34,16 @@ export default function Studio() {
 
   useEffect(() => {
     if (!project) return;
-    if (!startedOnce && project.status === "queued") {
+    // Only invoke the demo runPipeline for source kinds that we couldn't
+    // analyse client-side. Real uploads already have their artifacts.
+    const needsDemoRun =
+      project.status === "queued" &&
+      (project.source === "demo" || project.source === "sample" || project.source === "url");
+    if (!startedOnce && needsDemoRun) {
       setStartedOnce(true);
       run({ projectId }).catch(() => {});
     }
-  }, [project?.status, project, run, projectId, startedOnce]);
+  }, [project?.status, project?.source, project, run, projectId, startedOnce]);
 
   if (!project) {
     return (
@@ -85,7 +90,8 @@ export default function Studio() {
         persona={project.persona}
         onRerun={rerun}
         onReset={reset}
-        demoMode={true}
+        demoMode={project.source !== "upload"}
+        source={project.source}
       />
 
       <div className="grid grid-cols-1 gap-3 px-3 py-3 lg:grid-cols-12">

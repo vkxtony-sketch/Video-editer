@@ -8,12 +8,12 @@ import {
   Clapperboard,
   Clock3,
   Film,
+  Loader2,
   Plus,
   Sparkles,
   Trash2,
   Upload,
   Video,
-  X,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
@@ -30,6 +30,10 @@ import { Textarea } from "../components/ui/textarea";
 import { Skeleton } from "../components/ui/skeleton";
 import { useSession } from "../hooks/useSession";
 import { formatTimestamp } from "../lib/utils";
+import {
+  analyzeAndIngest,
+  type AnalysisProgress,
+} from "../lib/pipelineClient";
 
 const personas = [
   { key: "podcast", label: "Podcast · Multi-cam", dur: 90 * 60 },
@@ -40,6 +44,14 @@ const personas = [
   { key: "interview", label: "Long Interview", dur: 5 * 3600 },
 ];
 
+const STAGE_LABEL: Record<AnalysisProgress["stage"], string> = {
+  "audio-decode": "Decoding audio",
+  "audio-rms": "Measuring energy + silence",
+  "video-sample": "Sampling frames + scene detection",
+  "build-artifacts": "Scoring clips + drafting titles",
+  ingest: "Saving results",
+};
+
 export default function Dashboard() {
   const ownerId = useSession();
   const projects = useQuery(
@@ -48,9 +60,14 @@ export default function Dashboard() {
   );
   const remove = useMutation(api.projects.remove);
   const create = useMutation(api.projects.create);
+  const ingestAnalysis = useMutation(api.analyze.ingestAnalysis);
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
+  const [analyzing, setAnalyzing] = useState<{
+    stage: AnalysisProgress["stage"];
+    frac: number;
+  } | null>(null);
 
   async function handleDelete(id: Id<"projects">) {
     await remove({ id });
@@ -74,32 +91,63 @@ export default function Dashboard() {
 
   async function ingestFile(file: File) {
     if (!ownerId) return;
-    // Only accept video-y types; size capped at 500MB for the in-browser MVP.
     if (!/^video\//.test(file.type) && !/\.(mp4|mov|webm|m4v|mkv|avi)$/i.test(file.name)) {
       alert("Please drop a video file (mp4, mov, webm, m4v, mkv).");
       return;
     }
     if (file.size > 500 * 1024 * 1024) {
       alert(
-        "File is over 500MB — the in-browser upload caps at 500MB. For huge VODs, please link directly to the stream source (URL source).",
+        "File is over 500MB — the in-browser pipeline caps at 500MB. For huge VODs, please link directly to the stream source (URL source).",
       );
       return;
     }
+
+    setAnalyzing({ stage: "audio-decode", frac: 0 });
     const url = URL.createObjectURL(file);
-    const duration = await probeDuration(url).catch(() => 0);
+    const probedDuration = await probeDuration(url).catch(() => 0);
     const minutes = Math.max(1, Math.round(file.size / (1024 * 1024)));
-    const title = file.name.replace(/\.[^.]+$/, "");
+    const title = file.name.replace(/\.[^.]+$/, "") || "Untitled upload";
+    const durationSec = Math.max(60, Math.floor(probedDuration || minutes * 60));
+
     const { projectId } = await create({
       ownerId,
       title,
       source: "upload",
       sourceUrl: url,
       sourceLabel: `${file.name} · ${minutes}MB`,
-      durationSec: Math.max(60, Math.floor(duration || minutes * 60)),
+      durationSec,
       sizeMb: minutes,
       persona: "user upload",
     });
-    navigate(`/studio/${projectId}`);
+
+    try {
+      await analyzeAndIngest({
+        file,
+        projectId,
+        title,
+        persona: "user upload",
+        ownerId,
+        ingest: async (artifacts) => {
+          await ingestAnalysis({
+            projectId: projectId as Id<"projects">,
+            clips: artifacts.clips,
+            titles: artifacts.titles,
+            thumbnails: artifacts.thumbnails,
+            captions: artifacts.captions,
+            metrics: artifacts.metrics,
+          });
+        },
+        onProgress: (p) => setAnalyzing({ stage: p.stage, frac: p.frac }),
+      });
+      navigate(`/studio/${projectId}`);
+    } catch (err) {
+      console.error(err);
+      alert("Real analysis failed — falling back to demo. " + String(err));
+      // navigate anyway; studio will show pipeline-runner for that project
+      navigate(`/studio/${projectId}`);
+    } finally {
+      setAnalyzing(null);
+    }
   }
 
   return (
@@ -116,9 +164,19 @@ export default function Dashboard() {
         >
           <div className="flex flex-col items-center gap-3 text-primary">
             <Upload className="h-10 w-10" />
-            <p className="text-sm font-medium">Drop a video to spin up a project</p>
+            <p className="text-sm font-medium">
+              Drop a video to spin up a project · real analysis runs in your
+              browser
+            </p>
           </div>
         </div>
+      )}
+
+      {analyzing && (
+        <AnalyzingOverlay
+          stage={analyzing.stage}
+          frac={analyzing.frac}
+        />
       )}
 
       <div className="flex flex-wrap items-end justify-between gap-4">
@@ -133,8 +191,9 @@ export default function Dashboard() {
             <span className="gradient-text-neon">Projects</span>
           </h1>
           <p className="mt-1 text-sm text-muted-foreground">
-            Drop a video anywhere on this page to start, or open the new-project
-            dialog. Same for big VODs — point us at the URL.
+            Drop a video anywhere on this page — the browser runs real Web
+            Audio + frame-hash analysis to find highlights, cuts, and chapters.
+            For huge VODs, point us at the URL.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -164,6 +223,7 @@ export default function Dashboard() {
                   progress={p.progress}
                   summary={p.summary}
                   persona={p.persona}
+                  source={p.source}
                   onOpen={() => navigate(`/studio/${p._id}`)}
                   onDelete={() => handleDelete(p._id)}
                 />
@@ -171,6 +231,38 @@ export default function Dashboard() {
             ))}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function AnalyzingOverlay({
+  stage,
+  frac,
+}: {
+  stage: AnalysisProgress["stage"];
+  frac: number;
+}) {
+  return (
+    <div
+      aria-live="polite"
+      className="fixed inset-0 z-50 grid place-items-center bg-background/70 backdrop-blur"
+    >
+      <div className="w-full max-w-md rounded-2xl border border-primary/30 bg-card p-6 shadow-[0_0_60px_-15px_rgba(0,243,255,0.6)]">
+        <div className="flex items-center gap-3">
+          <Loader2 className="h-5 w-5 animate-spin text-primary" />
+          <div className="text-sm font-medium">{STAGE_LABEL[stage]}</div>
+        </div>
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-secondary">
+          <div
+            className="h-full bg-gradient-to-r from-primary to-accent transition-all"
+            style={{ width: `${Math.round(frac * 100)}%` }}
+          />
+        </div>
+        <p className="mt-3 text-xs text-muted-foreground">
+          Running real Web Audio + frame-hash analysis in your browser. No
+          data leaves your device.
+        </p>
       </div>
     </div>
   );
@@ -184,6 +276,7 @@ function ProjectCard({
   progress,
   summary,
   persona,
+  source,
   onOpen,
   onDelete,
 }: {
@@ -194,6 +287,7 @@ function ProjectCard({
   progress: number;
   summary?: string;
   persona?: string;
+  source?: "upload" | "url" | "demo" | "sample";
   onOpen: () => void;
   onDelete: () => void;
 }) {
@@ -218,6 +312,11 @@ function ProjectCard({
               {persona && (
                 <span className="inline-flex items-center gap-1 rounded border border-border/80 bg-secondary/60 px-1.5 py-0.5">
                   {persona}
+                </span>
+              )}
+              {source === "upload" && (
+                <span className="inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-accent">
+                  Real upload
                 </span>
               )}
             </div>
@@ -266,6 +365,7 @@ function EmptyState({ onPick }: { onPick: (file: File) => void }) {
       <h3 className="mt-4 text-lg font-semibold">No projects yet</h3>
       <p className="mt-1 text-sm text-muted-foreground">
         Drag a video anywhere on this page, or click the button to pick one.
+        The browser runs Web Audio + frame-hash analysis to find highlights.
       </p>
       <input
         ref={inputRef}
@@ -455,7 +555,8 @@ function NewProjectDialog({
                   className="block w-full rounded-lg border border-dashed border-border/70 bg-secondary/30 p-4 text-center text-xs text-muted-foreground transition hover:border-primary/40 hover:text-foreground"
                 >
                   <Upload className="mx-auto h-4 w-4" />
-                  Click to pick a video file · mp4, mov, webm up to 500MB
+                  Click to pick a video file · runs real Web Audio + frame
+                  analysis locally · up to 500MB
                 </button>
               </div>
             )}
@@ -471,9 +572,8 @@ function NewProjectDialog({
 
           <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-3">
             <p className="text-xs text-muted-foreground">
-              Generates highlights, shorts, chapters, captions, titles &
-              thumbnails. Generation is project-aware — each title feeds the
-              seed.
+              Demo and URL sources use the bundled mock pipeline. Uploaded
+              files run real analysis in your browser.
             </p>
             <div className="flex gap-2">
               <Button variant="ghost" onClick={() => setOpen(false)}>
@@ -486,7 +586,7 @@ function NewProjectDialog({
               >
                 {busy ? (
                   <>
-                    <Loader /> Starting…
+                    <Loader2 className="h-4 w-4 animate-spin" /> Starting…
                   </>
                 ) : (
                   <>
@@ -510,12 +610,6 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-function Loader() {
-  return (
-    <span className="inline-flex h-3 w-3 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-  );
-}
-
 function probeDuration(url: string): Promise<number> {
   return new Promise((resolve) => {
     const v = document.createElement("video");
@@ -534,7 +628,6 @@ function probeDuration(url: string): Promise<number> {
       cleanup();
       resolve(0);
     };
-    // Safety timeout
     setTimeout(() => {
       cleanup();
       resolve(0);

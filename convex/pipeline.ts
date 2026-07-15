@@ -338,6 +338,12 @@ export const runPipeline = action({
   handler: async (ctx, args) => {
     const project = await ctx.runQuery(api.projects.get, { id: args.projectId });
     if (!project) throw new Error("project not found");
+    // Real uploads bypass this entirely — artifacts come from the client's
+    // Web Audio + frame-hash pipeline (see /src/lib/pipelineClient.ts and
+    // /convex/analyze.ts). Only demo / url / sample sources fall through.
+    if (project.source === "upload") {
+      return;
+    }
 
     const now = Date.now();
     const runId = await ctx.runMutation(api.pipelineHelpers._createRun, {
