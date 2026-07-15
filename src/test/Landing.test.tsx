@@ -45,7 +45,7 @@ describe("Landing", () => {
     await userEvent.click(btns[0]);
     // Allow microtask for the awaited create() call.
     await new Promise((r) => setTimeout(r, 0));
-    const createCalls = calls.mutation.filter((c) => c.apiKey === "projects:create");
+    const createCalls = calls.mutation.filter((c) => c.apiKey === "projects.create");
     expect(createCalls.length).toBe(1);
     expect(createCalls[0].args).toMatchObject({
       ownerId: "u_test_session",

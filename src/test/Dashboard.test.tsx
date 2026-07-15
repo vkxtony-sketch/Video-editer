@@ -46,7 +46,7 @@ describe("Dashboard", () => {
     renderDashboard();
     expect(screen.getByText("Sunday stream")).toBeInTheDocument();
     expect(screen.getByText(/12:00:00/)).toBeInTheDocument();
-    expect(screen.getByText(/12-highlights/i)).toBeInTheDocument();
+    expect(screen.getByText(/12\s+highlights/i)).toBeInTheDocument();
     expect(screen.getByText(/Ready/i)).toBeInTheDocument();
   });
 
@@ -68,7 +68,7 @@ describe("Dashboard", () => {
     const del = screen.getByText(/Delete/i);
     await userEvent.click(del);
     await new Promise((r) => setTimeout(r, 0));
-    const removes = calls.mutation.filter((c) => c.apiKey === "projects:remove");
+    const removes = calls.mutation.filter((c) => c.apiKey === "projects.remove");
     expect(removes.length).toBe(1);
     expect((removes[0].args as any).id).toBe("p_xyz789");
   });

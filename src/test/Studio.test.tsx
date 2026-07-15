@@ -87,9 +87,8 @@ describe("Studio", () => {
     convexMock.query("queries:latestRun", null);
     renderStudio();
     expect(screen.getByText("Test Project")).toBeInTheDocument();
-    expect(screen.getByText(/42%/).length ?? 0).toBeGreaterThanOrEqual(0);
-    // progress digits -> "42%" (rendered in ProjectHeader twice: progress bar
-    // text + maybe summary)
+    // progress digits -> "42%" appears in the ProjectHeader's progress label
+    // AND in the VideoPreview's processing badge, so use getAllByText.
     expect(screen.getAllByText(/42%/).length).toBeGreaterThanOrEqual(1);
   });
 });
