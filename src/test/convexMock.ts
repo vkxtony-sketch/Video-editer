@@ -1,5 +1,7 @@
 import { afterEach, beforeEach } from "vitest";
-import { setConvexResponses, clearConvexResponses, calls } from "./setup";
+import { setConvexResponses, clearConvexResponses } from "./setup";
+
+export const calls = (globalThis as any).__convexMockState.calls;
 
 /**
  * Helpers for scripting per-test Convex hook responses. We key on the
@@ -17,7 +19,6 @@ export const convexMock = {
   action: add("action"),
   /** Stop using baked-in local storage session id for one test */
   freshSession: () => window.localStorage.removeItem("neon:session"),
-  calls,
 };
 
 beforeEach(() => clearConvexResponses());

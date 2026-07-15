@@ -1,5 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { vi } from "vitest";
+import { getFunctionName } from "convex/server";
 
 // ---------------------------------------------------------------------------
 // jsdom missing globals: framer-motion's `whileInView` uses
@@ -31,7 +32,6 @@ if (typeof globalThis !== "undefined" && !("ResizeObserver" in globalThis)) {
   };
 }
 
-// matchMedia is referenced by some shadcn primitives; stub it for jsdom.
 if (typeof window !== "undefined" && !window.matchMedia) {
   // @ts-expect-error - lightweight stub for shadcn/Radix check
   window.matchMedia = (query: string) => ({
@@ -46,18 +46,26 @@ if (typeof window !== "undefined" && !window.matchMedia) {
   });
 }
 
-// scrollIntoView is missing in jsdom and used by some Radix components.
 if (typeof Element !== "undefined" && !Element.prototype.scrollIntoView) {
   // @ts-expect-error - lightweight stub
   Element.prototype.scrollIntoView = function () {};
 }
 
 // ---------------------------------------------------------------------------
-// Convex mocks: the runtime `api` tree exposes leaves as FunctionReference
-// objects with a `.name` of the form `module:function`. We hoist `registry` and
-// `calls` so vi.mock factories (which Vitest itself hoists) can reference them
-// before module-level code runs.
+// Mock state lives on globalThis so it's reachable from any module — including
+// inside `vi.mock(...)` factories, which Vitest transforms independently of
+// the rest of this file's module scope.
 // ---------------------------------------------------------------------------
+
+vi.hoisted(() => {
+  const g = globalThis as any;
+  if (!g.__convexMockState) {
+    g.__convexMockState = {
+      registry: { query: [], mutation: [], action: [] },
+      calls: { mutation: [], action: [] },
+    };
+  }
+});
 
 type Entry =
   | {
@@ -73,71 +81,96 @@ type Entry =
       error: Error;
     };
 
-// `vi.hoisted` runs first. Variables defined inside are accessible to vi.mock
-// factories at the top of this file.
-const hoistedState = vi.hoisted(() => ({
-  registry: {
-    query: [] as any[],
-    mutation: [] as any[],
-    action: [] as any[],
-  },
-  calls: {
-    mutation: [] as Array<{ apiKey: string; args: unknown }>,
-    action: [] as Array<{ apiKey: string; args: unknown }>,
-  },
-}));
-
-const registry = hoistedState.registry;
-const calls = hoistedState.calls;
-export { registry, calls };
-
 export function setConvexResponses(
   kind: "query" | "mutation" | "action",
   ...entries: Entry[]
 ) {
-  registry[kind].push(...entries);
+  (globalThis as any).__convexMockState.registry[kind].push(...entries);
 }
 
 export function clearConvexResponses() {
-  registry.query.length = 0;
-  registry.mutation.length = 0;
-  registry.action.length = 0;
-  calls.mutation.length = 0;
-  calls.action.length = 0;
+  const s = (globalThis as any).__convexMockState;
+  s.registry.query.length = 0;
+  s.registry.mutation.length = 0;
+  s.registry.action.length = 0;
+  s.calls.mutation.length = 0;
+  s.calls.action.length = 0;
 }
 
-function pathKey(q: any): string {
-  if (typeof q === "string") return q.replace(/[:/]/g, ".");
-  // Convex exposes raw api paths as FunctionReference-like objects whose
-  // `.name` is the canonical "module:function" string. We normalise separators
-  // so tests can register either style.
-  if (q && typeof q === "object" && typeof q.name === "string") {
-    return q.name.replace(/[:/]/g, ".");
-  }
-  try {
-    return String(q).replace(/[:/]/g, ".");
-  } catch {
-    return "<unknown>";
-  }
-}
+// Expose getFunctionName via globalThis so the vi.mock factory below (which
+// is hoisted and runs in a transformed scope) can reach it without needing to
+// dynamically require convex/server inside a non-CommonJS context.
+(globalThis as any).__getFunctionName = getFunctionName;
 
-function lookup(
-  kind: "query" | "mutation" | "action",
-  key: string,
-  args: unknown,
-) {
-  const norm = (s: string) => s.replace(/[:/]/g, ".");
-  const k = norm(String(key));
-  for (const e of registry[kind]) {
-    const eKey = norm(e.key);
-    if (k !== eKey && !k.includes(eKey) && !eKey.includes(k)) continue;
-    if (e.match && !e.match(args)) continue;
-    return e;
-  }
-  return null;
-}
+// Mock the generated `api` tree with a recursive Proxy whose leaves stringify
+// to the dotted "module:function" path. This means `api.projects.get` becomes
+// a Proxy whose `String(q)` returns `"projects.get"`, which our pathKey logic
+// can pick up directly via its fallback `String(q).replace(/[:/]/g, ".")`.
+vi.mock("../../convex/_generated/api", () => {
+  const createProxy = (path: string): any => {
+    const fn = () => {};
+    fn.toString = () => path;
+    return new Proxy(fn, {
+      get(_t, prop) {
+        if (
+          typeof prop === "string" &&
+          prop !== "then" &&
+          prop !== "toString"
+        ) {
+          return createProxy(path ? `${path}.${prop}` : prop);
+        }
+        return Reflect.get(fn, prop);
+      },
+    });
+  };
+  return { api: createProxy(""), internal: createProxy("") };
+});
 
 vi.mock("convex/react", () => {
+  // Inlined so the mock factory has guaranteed access to these helpers even
+  // after vitest's module transformation.
+  function pathKey(q: any): string {
+    if (typeof q === "string") return q.replace(/[:/]/g, ".");
+    // Convex exposes the api tree via anyApi (a Proxy). Use the official
+    // helper to extract the real "module:function" string, falling back to
+    // direct property probes if it isn't available in this runtime.
+    try {
+      const gfn = (globalThis as any).__getFunctionName;
+      if (gfn) {
+        const name = gfn(q);
+        if (typeof name === "string") return name.replace(/[:/]/g, ".");
+      }
+    } catch {
+      /* fall through to manual probes */
+    }
+    if (q && typeof q === "object" && typeof q.name === "string") {
+      return q.name.replace(/[:/]/g, ".");
+    }
+    try {
+      return String(q).replace(/[:/]/g, ".");
+    } catch {
+      return "<unknown>";
+    }
+  }
+
+  function lookup(
+    kind: "query" | "mutation" | "action",
+    key: string,
+    args: unknown,
+  ) {
+    const s = (globalThis as any).__convexMockState;
+    if (!s) return null;
+    const norm = (str: string) => str.replace(/[:/]/g, ".");
+    const k = norm(String(key));
+    for (const e of s.registry[kind]) {
+      const eKey = norm(e.key);
+      if (k !== eKey && !k.includes(eKey) && !eKey.includes(k)) continue;
+      if (e.match && !e.match(args)) continue;
+      return e;
+    }
+    return null;
+  }
+
   const useQuery = (q: unknown, args: unknown) => {
     const key = pathKey(q);
     const entry = lookup("query", key, args);
@@ -149,7 +182,8 @@ vi.mock("convex/react", () => {
   const useMutation = (m: unknown) => {
     return (...args: unknown[]) => {
       const key = pathKey(m);
-      calls.mutation.push({ apiKey: key, args: args[0] });
+      const s = (globalThis as any).__convexMockState;
+      if (s) s.calls.mutation.push({ apiKey: key, args: args[0] });
       const entry = lookup("mutation", key, args[0]);
       if (entry?.type === "value") return Promise.resolve(entry.value);
       if ((entry as any)?.type === "rejects")
@@ -161,7 +195,8 @@ vi.mock("convex/react", () => {
   const useAction = (a: unknown) => {
     return (...args: unknown[]) => {
       const key = pathKey(a);
-      calls.action.push({ apiKey: key, args: args[0] });
+      const s = (globalThis as any).__convexMockState;
+      if (s) s.calls.action.push({ apiKey: key, args: args[0] });
       const entry = lookup("action", key, args[0]);
       if (entry?.type === "value") return Promise.resolve(entry.value);
       if ((entry as any)?.type === "rejects")
