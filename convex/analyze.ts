@@ -144,3 +144,34 @@ export const ingestAnalysis = mutation({
     return { ok: true as const, runId };
   },
 });
+
+// Companion mutation for ingesting detected scene-change markers. Idempotent
+// (clears prior projectScenes for this project before inserting fresh ones).
+export const ingestSceneMarks = mutation({
+  args: {
+    projectId: v.id("projects"),
+    marks: v.array(
+      v.object({
+        tSec: v.number(),
+        distance: v.number(),
+      }),
+    ),
+  },
+  handler: async (ctx, args) => {
+    const prior = await ctx.db
+      .query("projectScenes")
+      .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+      .collect();
+    for (const m of prior) await ctx.db.delete(m._id);
+    const now = Date.now();
+    for (const m of args.marks) {
+      await ctx.db.insert("projectScenes", {
+        projectId: args.projectId,
+        tSec: Math.floor(m.tSec),
+        distance: m.distance,
+        createdAt: now,
+      });
+    }
+    return { ingested: args.marks.length, removed: prior.length };
+  },
+});

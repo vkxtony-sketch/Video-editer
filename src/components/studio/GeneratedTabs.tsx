@@ -34,13 +34,22 @@ export default function GeneratedTabs({
   titles,
   thumbnails,
   captions,
+  value,
+  onValueChange,
 }: {
   titles: TitleItem[];
   thumbnails: ThumbItem[];
   captions: CaptionItem[];
+  value?: "titles" | "thumbs" | "captions";
+  onValueChange?: (v: "titles" | "thumbs" | "captions") => void;
 }) {
   return (
-    <Tabs defaultValue="titles" className="flex h-full flex-col">
+    <Tabs
+      value={value}
+      defaultValue={value ?? "titles"}
+      onValueChange={(v) => onValueChange?.(v as "titles" | "thumbs" | "captions")}
+      className="flex h-full flex-col"
+    >
       <div className="flex items-center justify-between gap-3 border-b border-border/60 px-4 py-2.5">
         <div className="text-sm font-medium">Generated</div>
         <TabsList>

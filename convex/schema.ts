@@ -90,4 +90,13 @@ export default defineSchema({
     text: v.string(),
     sentiment: v.string(),
   }).index("by_project", ["projectId"]),
+
+  // Scene-change markers detected by the client-side frame-hash analysis.
+  // Surfaced on the TimelineStrip as dashed vertical lines.
+  projectScenes: defineTable({
+    projectId: v.id("projects"),
+    tSec: v.number(),
+    distance: v.number(),
+    createdAt: v.number(),
+  }).index("by_project", ["projectId"]),
 });

@@ -1,7 +1,46 @@
-import { useEffect, useRef, useState } from "react";
+import {
+  forwardRef,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Cpu, Film, Play, ScanLine, Sparkles, Volume2 } from "lucide-react";
+import {
+  Cpu,
+  Film,
+  Play,
+  ScanLine,
+  Sparkles,
+  Volume2,
+} from "lucide-react";
 import { formatTimestamp } from "@/lib/utils";
+import {
+  computeWaveformFromUrl,
+  drawWaveform,
+  type Waveform,
+} from "@/lib/waveform";
+
+export type VideoControlRef = {
+  /** Toggle play/pause of the underlying video element. */
+  togglePlay: () => void;
+  /** Pause playback (no-op if already paused). */
+  pause: () => void;
+  /** Play (no-op if already playing). */
+  play: () => void;
+  /** Seek by a signed delta in seconds. Clamped to [0, duration]. */
+  seekBy: (deltaSec: number) => void;
+  /** Seek to an absolute second. Clamped to [0, duration]. */
+  seekTo: (sec: number) => void;
+  /** Mute / unmute. Pass `null` to toggle. */
+  setMuted: (muted: boolean | null) => void;
+  /** Best-effort fullscreen on the video element. */
+  requestFullscreen: () => Promise<void>;
+  /** Returns the current playback time in seconds. */
+  currentTime: () => number;
+  /** Returns the total duration. */
+  duration: () => number;
+};
 
 export type PreviewProps = {
   videoUrl?: string;
@@ -27,18 +66,25 @@ function isPlayableVideo(url?: string): boolean {
   return /\.(mp4|mov|webm|m4v|mkv|avi)(\?|$)/i.test(url);
 }
 
-export default function VideoPreview({
-  videoUrl,
-  persona,
-  durationSec,
-  progress,
-  activeStage,
-  status,
-  scrubToSec,
-}: PreviewProps) {
+const VideoPreview = forwardRef<VideoControlRef, PreviewProps>(function VideoPreview(
+  {
+    videoUrl,
+    persona,
+    durationSec,
+    progress,
+    activeStage,
+    status,
+    scrubToSec,
+  },
+  ref,
+) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const [tick, setTick] = useState(0);
   const [nowPlaying, setNowPlaying] = useState(false);
+  const [muted, setMuted] = useState(true); // start muted; user can press M
+  const [currentTime, setCurrentTime] = useState(0);
+  const [waveform, setWaveform] = useState<Waveform | null>(null);
 
   useEffect(() => {
     const id = window.setInterval(() => setTick((t) => t + 1), 80);
@@ -51,18 +97,112 @@ export default function VideoPreview({
   const ratio = scrubToSec != null ? scrubToSec / total : 0;
   const playhead = Math.min(1, Math.max(0, ratio));
 
+  // Decoded + downsampled waveform for the playable media. Runs once per
+  // videoUrl change. Silent failure → no canvas render.
+  useEffect(() => {
+    if (!playable || !videoUrl) {
+      setWaveform(null);
+      return;
+    }
+    let cancelled = false;
+    (async () => {
+      const wf = await computeWaveformFromUrl(videoUrl, 256);
+      if (!cancelled) setWaveform(wf);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [playable, videoUrl]);
+
+  // Poll currentTime so the waveform playhead + scanline follow playback.
+  useEffect(() => {
+    if (!playable) return;
+    const id = window.setInterval(() => {
+      const v = videoRef.current;
+      if (v) setCurrentTime(v.currentTime);
+    }, 100);
+    return () => window.clearInterval(id);
+  }, [playable]);
+
+  // Redraw the waveform canvas when peaks, playhead ratio, or width changes.
+  useEffect(() => {
+    if (!waveform || !canvasRef.current) return;
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const dpr = window.devicePixelRatio || 1;
+    const rect = canvas.getBoundingClientRect();
+    canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+    canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const ratio =
+      waveform.durationSec > 0
+        ? Math.min(1, Math.max(0, currentTime / waveform.durationSec))
+        : 0;
+    drawWaveform(ctx, waveform.peaks, rect.width, rect.height, ratio);
+  }, [waveform, currentTime, tick]);
+
+  // Scrub-to helper driven by parent state.
   function seekTo(sec: number) {
     const v = videoRef.current;
     if (!v) return;
-    v.currentTime = Math.max(0, Math.min(total, sec));
-    if (v.paused) void v.play().catch(() => {});
+    const clamped = Math.max(0, Math.min(total, sec));
+    v.currentTime = clamped;
   }
 
-  // When the parent asks us to scrub, jump the real video element.
   useEffect(() => {
     if (playable && scrubToSec != null) seekTo(scrubToSec);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scrubToSec, playable]);
+
+  // Expose imperative video controls to the parent for keyboard shortcuts.
+  useImperativeHandle(
+    ref,
+    (): VideoControlRef => ({
+      togglePlay: () => {
+        const v = videoRef.current;
+        if (!v) return;
+        if (v.paused) void v.play().catch(() => {});
+        else v.pause();
+      },
+      play: () => {
+        const v = videoRef.current;
+        if (!v) return;
+        void v.play().catch(() => {});
+      },
+      pause: () => {
+        const v = videoRef.current;
+        if (!v) return;
+        v.pause();
+      },
+      seekBy: (delta) => {
+        const v = videoRef.current;
+        if (!v) return;
+        const next = Math.max(0, Math.min(total, v.currentTime + delta));
+        v.currentTime = next;
+        setCurrentTime(next);
+      },
+      seekTo: (sec) => {
+        seekTo(sec);
+        setCurrentTime(sec);
+      },
+      setMuted: (m) => {
+        const v = videoRef.current;
+        if (!v) return;
+        const next = m === null ? !v.muted : m;
+        v.muted = next;
+        setMuted(next);
+      },
+      requestFullscreen: async () => {
+        const v = videoRef.current;
+        if (!v) return;
+        if (v.requestFullscreen) await v.requestFullscreen();
+      },
+      currentTime: () => videoRef.current?.currentTime ?? 0,
+      duration: () => videoRef.current?.duration ?? 0,
+    }),
+    [total],
+  );
 
   return (
     <div className="relative h-full overflow-hidden rounded-xl border border-border/70 bg-card/60">
@@ -84,7 +224,7 @@ export default function VideoPreview({
           )}
         </div>
         <div className="flex items-center gap-2 font-mono text-xs text-muted-foreground">
-          <span>{formatTimestamp(scrubToSec ?? 0)}</span>
+          <span>{formatTimestamp(playable ? currentTime : scrubToSec ?? 0)}</span>
           <span className="text-border">/</span>
           <span>{formatTimestamp(total)}</span>
         </div>
@@ -106,6 +246,7 @@ export default function VideoPreview({
             src={videoUrl}
             controls
             preload="metadata"
+            muted={muted}
             onPlay={() => setNowPlaying(true)}
             onPause={() => setNowPlaying(false)}
           />
@@ -159,16 +300,42 @@ export default function VideoPreview({
           </div>
         )}
 
-        <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-1.5 bg-border/40">
-          <div
-            className="h-full bg-gradient-to-r from-primary to-accent shadow-[0_0_10px_rgba(0,243,255,0.7)]"
-            style={{ width: `${playhead * 100}%` }}
-          />
-        </div>
+        {/* Waveform canvas — only meaningful when an audio source is loaded. */}
+        {playable && (
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12">
+            <canvas
+              ref={canvasRef}
+              className="block h-full w-full"
+              data-testid="waveform-canvas"
+            />
+          </div>
+        )}
+
+        {/* Playback progress bar overlays the bottom of the playable area. */}
+        {playable && (
+          <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-1 bg-border/40">
+            <div
+              className="h-full bg-gradient-to-r from-primary to-accent shadow-[0_0_10px_rgba(0,243,255,0.7)]"
+              style={{
+                width: `${Math.min(100, Math.max(0, (currentTime / total) * 100))}%`,
+              }}
+            />
+          </div>
+        )}
+        {!playable && (
+          <div className="pointer-events-none absolute bottom-0 left-0 right-0 h-1.5 bg-border/40">
+            <div
+              className="h-full bg-gradient-to-r from-primary to-accent shadow-[0_0_10px_rgba(0,243,255,0.7)]"
+              style={{ width: `${playhead * 100}%` }}
+            />
+          </div>
+        )}
       </div>
     </div>
   );
-}
+});
+
+export default VideoPreview;
 
 function PreviewCanvas({
   progress,
@@ -192,7 +359,8 @@ function PreviewCanvas({
           {Array.from({ length: bars }).map((_, i) => {
             const seed = (i * 13 + tick * 7) % 100;
             const h = 18 + ((seed * 31) % 60);
-            const onBar = status === "processing" && (i / bars) * 100 > (100 - progress);
+            const onBar =
+              status === "processing" && (i / bars) * 100 > (100 - progress);
             return (
               <div
                 key={i}

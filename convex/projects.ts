@@ -144,6 +144,11 @@ export const remove = mutation({
       .withIndex("by_project", (q) => q.eq("projectId", args.id))
       .collect();
     for (const c of caps) await ctx.db.delete(c._id);
+    const scenes = await ctx.db
+      .query("projectScenes")
+      .withIndex("by_project", (q) => q.eq("projectId", args.id))
+      .collect();
+    for (const s of scenes) await ctx.db.delete(s._id);
     const runs = await ctx.db
       .query("pipelineRuns")
       .withIndex("by_project", (q) => q.eq("projectId", args.id))

@@ -67,3 +67,14 @@ export const latestRun = query({
     return runs[0] ?? null;
   },
 });
+
+export const listSceneMarks = query({
+  args: { projectId: v.id("projects") },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("projectScenes")
+      .withIndex("by_project", (q) => q.eq("projectId", args.projectId))
+      .order("asc")
+      .collect();
+  },
+});

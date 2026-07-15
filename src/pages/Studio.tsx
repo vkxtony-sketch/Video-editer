@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAction, useMutation, useQuery } from "convex/react";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import ProjectHeader from "../components/studio/ProjectHeader";
-import VideoPreview from "../components/studio/VideoPreview";
+import VideoPreview, {
+  type VideoControlRef,
+} from "../components/studio/VideoPreview";
 import HighlightsList, {
   HighlightItem,
 } from "../components/studio/HighlightsList";
@@ -14,9 +16,26 @@ import GeneratedTabs, {
   CaptionItem,
 } from "../components/studio/GeneratedTabs";
 import TerminalLog, { LogLine } from "../components/studio/TerminalLog";
-import TimelineStrip, { TimelineClip } from "../components/studio/TimelineStrip";
+import TimelineStrip from "../components/studio/TimelineStrip";
 import { Skeleton } from "../components/ui/skeleton";
 import { detectSilenceFromUrl } from "@/lib/silenceDetect";
+import { useStudioPrefs, type StudioTab } from "@/lib/useLocalStorage";
+import {
+  isTextFieldFocused,
+  useStudioShortcuts,
+  type ShortcutAction,
+} from "@/lib/useShortcuts";
+
+const TAB_ORDER: StudioTab[] = ["titles", "thumbs", "captions"];
+
+function nextTab(tab: StudioTab): StudioTab {
+  const i = TAB_ORDER.indexOf(tab);
+  return TAB_ORDER[(i + 1) % TAB_ORDER.length];
+}
+function prevTab(tab: StudioTab): StudioTab {
+  const i = TAB_ORDER.indexOf(tab);
+  return TAB_ORDER[(i - 1 + TAB_ORDER.length) % TAB_ORDER.length];
+}
 
 export default function Studio() {
   const { id } = useParams<{ id: string }>();
@@ -28,6 +47,7 @@ export default function Studio() {
   const thumbs = useQuery(api.queries.listThumbnails, { projectId });
   const caps = useQuery(api.queries.listCaptions, { projectId });
   const runRow = useQuery(api.queries.latestRun, { projectId });
+  const sceneMarks = useQuery(api.queries.listSceneMarks, { projectId });
   const run = useAction(api.pipeline.runPipeline);
   const appendCuts = useMutation(api.projects.appendCuts);
   const [activeClip, setActiveClip] = useState<string | null>(null);
@@ -36,21 +56,55 @@ export default function Studio() {
   const [audioScanRunning, setAudioScanRunning] = useState(false);
   const audioScanStartedRef = useRef<string | null>(null);
 
+  // Persistent tab + highlight selection (per-project).
+  const [prefs, setPrefs] = useStudioPrefs(projectId);
+
+  // Imperative video control handle for keyboard shortcuts.
+  const videoRef = useRef<VideoControlRef | null>(null);
+
+  // Restore last selected highlight when project loads.
+  useEffect(() => {
+    if (!project) return;
+    if (!clips) return;
+    if (prefs.highlightId && clips.some((c) => c._id === prefs.highlightId)) {
+      setActiveClip(prefs.highlightId);
+      const c = clips.find((x) => x._id === prefs.highlightId);
+      if (c) setScrubToSec(Math.floor((c.startSec + c.endSec) / 2));
+    }
+    // intentionally only re-run when projectId or clips become available
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?._id, clips === undefined]);
+
+  // Persist tab selection.
+  const handleTabChange = useCallback(
+    (v: StudioTab) => setPrefs({ tab: v }),
+    [setPrefs],
+  );
+
+  // Persist highlight selection so it survives reload + cross-tab sync.
+  const handleSelectHighlight = useCallback(
+    (it: HighlightItem) => {
+      setActiveClip(it._id);
+      setScrubToSec(Math.floor((it.startSec + it.endSec) / 2));
+      setPrefs({ highlightId: it._id });
+    },
+    [setPrefs],
+  );
+
   useEffect(() => {
     if (!project) return;
     const needsDemoRun =
       project.status === "queued" &&
-      (project.source === "demo" || project.source === "sample" || project.source === "url");
+      (project.source === "demo" ||
+        project.source === "sample" ||
+        project.source === "url");
     if (!startedOnce && needsDemoRun) {
       setStartedOnce(true);
       run({ projectId }).catch(() => {});
     }
   }, [project?.status, project?.source, project, run, projectId, startedOnce]);
 
-  // Real audio silence detection: when a project is ready and has a playable
-  // audio source that we haven't yet scanned, decode it in the browser and
-  // append real cut markers to the timeline. We use a ref keyed by projectId
-  // so React Strict Mode double-invocation and page refreshes don't fire twice.
+  // Real audio silence detection when a project is ready and playable.
   useEffect(() => {
     if (!project) return;
     if (project.status !== "ready") return;
@@ -66,7 +120,6 @@ export default function Studio() {
         if (cuts.length > 0) {
           await appendCuts({ projectId, cuts });
         } else {
-          // No cuts found — still mark scanned so we don't keep trying.
           await appendCuts({ projectId, cuts: [] });
         }
       } catch (e) {
@@ -85,6 +138,63 @@ export default function Studio() {
     project,
   ]);
 
+  // Keyboard dispatch for studio shortcuts.
+  const highlightItems = (clips ?? []).filter(
+    (c) => c.kind === "highlight" || c.kind === "short",
+  );
+  const dispatchShortcut = useCallback(
+    (a: ShortcutAction) => {
+      switch (a.type) {
+        case "toggle-play":
+          videoRef.current?.togglePlay();
+          break;
+        case "seek": {
+          const v = videoRef.current;
+          if (v) {
+            v.seekBy(a.deltaSec);
+          } else {
+            const next =
+              (scrubToSec ?? 0) + a.deltaSec;
+            setScrubToSec(Math.max(0, Math.min(project?.durationSec ?? 0, next)));
+            setActiveClip(null);
+          }
+          break;
+        }
+        case "select-highlight": {
+          const it = highlightItems[a.index];
+          if (it) handleSelectHighlight(it);
+          break;
+        }
+        case "mute":
+          videoRef.current?.setMuted(null);
+          break;
+        case "fullscreen":
+          void videoRef.current?.requestFullscreen();
+          break;
+        case "next-tab":
+          setPrefs({ tab: nextTab(prefs.tab) });
+          break;
+        case "prev-tab":
+          setPrefs({ tab: prevTab(prefs.tab) });
+          break;
+        case "reset-scrub":
+          setScrubToSec(0);
+          setActiveClip(null);
+          videoRef.current?.seekTo(0);
+          break;
+      }
+    },
+    [highlightItems, handleSelectHighlight, prefs.tab, scrubToSec, project?.durationSec, setPrefs],
+  );
+
+  useStudioShortcuts(
+    {
+      highlightCount: highlightItems.length,
+      isTextFieldFocused,
+    },
+    dispatchShortcut,
+  );
+
   if (!project) {
     return (
       <div className="mx-auto max-w-7xl px-5 py-10">
@@ -96,10 +206,8 @@ export default function Studio() {
   }
 
   const derivedLogs: LogLine[] = logs ?? [];
-  const derivedClips: TimelineClip[] = clips ?? [];
-  const derivedHighs: HighlightItem[] = (clips ?? []).filter(
-    (c) => c.kind === "highlight" || c.kind === "short",
-  );
+  const derivedClips = clips ?? [];
+  const derivedHighs: HighlightItem[] = highlightItems;
   const derivedTitles: TitleItem[] = titles ?? [];
   const derivedThumbs: ThumbItem[] = thumbs ?? [];
   const derivedCaps: CaptionItem[] = caps ?? [];
@@ -107,6 +215,8 @@ export default function Studio() {
     ? "Real audio silence scan · Web Audio API"
     : runRow?.activeStage ?? "";
   const activeClipObj = derivedHighs.find((c) => c._id === activeClip) ?? null;
+  const nestedSceneMarks =
+    sceneMarks?.map((m) => ({ tSec: m.tSec, distance: m.distance })) ?? [];
 
   const navigate = useNavigate();
   function reset() {
@@ -114,10 +224,6 @@ export default function Studio() {
   }
   function rerun() {
     run({ projectId }).catch(() => {});
-  }
-  function selectClip(c: HighlightItem) {
-    setActiveClip(c._id);
-    setScrubToSec(Math.floor((c.startSec + c.endSec) / 2));
   }
 
   return (
@@ -143,6 +249,7 @@ export default function Studio() {
         <div className="flex min-h-[420px] flex-col gap-3 lg:col-span-8">
           <div className="flex-[1.4] min-h-[260px]">
             <VideoPreview
+              ref={videoRef}
               videoUrl={project.sourceUrl}
               persona={project.persona}
               durationSec={project.durationSec}
@@ -157,6 +264,8 @@ export default function Studio() {
               titles={derivedTitles}
               thumbnails={derivedThumbs}
               captions={derivedCaps}
+              value={prefs.tab}
+              onValueChange={(v) => handleTabChange(v as StudioTab)}
             />
           </div>
         </div>
@@ -167,7 +276,7 @@ export default function Studio() {
             <HighlightsList
               items={derivedHighs}
               activeId={activeClip}
-              onSelect={selectClip}
+              onSelect={handleSelectHighlight}
             />
           </div>
           <div className="min-h-[220px] flex-1">
@@ -176,18 +285,54 @@ export default function Studio() {
         </div>
       </div>
 
-      <div className="px-3 pb-4">
+      <div className="px-3 pb-2">
         <TimelineStrip
           durationSec={project.durationSec}
           clips={derivedClips}
+          sceneMarks={nestedSceneMarks}
           activeClipId={activeClipObj?._id ?? null}
           scrubToSec={scrubToSec}
           onScrub={(s) => {
             setScrubToSec(s);
             setActiveClip(null);
+            setPrefs({ highlightId: null });
           }}
         />
       </div>
+
+      <ShortcutLegend highlightCount={derivedHighs.length} />
+    </div>
+  );
+}
+
+function ShortcutLegend({ highlightCount }: { highlightCount: number }) {
+  const keys: { keys: string; label: string }[] = [
+    { keys: "Space / K", label: "Play / Pause" },
+    { keys: "J / L", label: "Seek ±5s" },
+    { keys: "← / →", label: "Seek ±5s" },
+    { keys: "⇧ ← / →", label: "Seek ±30s" },
+    { keys: "↑ / ↓", label: "Switch tab" },
+    { keys: "M", label: "Mute" },
+    { keys: "F", label: "Fullscreen" },
+    { keys: "Home", label: "Reset scrub" },
+  ];
+  if (highlightCount > 0) {
+    keys.push({ keys: "1 – 9", label: `Jump to highlight (${Math.min(9, highlightCount)})` });
+  }
+  return (
+    <div
+      data-testid="shortcut-legend"
+      className="mx-3 mb-4 flex flex-wrap items-center justify-center gap-x-3 gap-y-1.5 rounded-lg border border-border/60 bg-card/40 px-3 py-2 text-[10px] uppercase tracking-[0.18em] text-muted-foreground"
+    >
+      <span className="font-semibold text-foreground/80">Shortcuts</span>
+      {keys.map((k, i) => (
+        <span key={i} className="inline-flex items-center gap-1.5">
+          <kbd className="rounded border border-border/80 bg-secondary/60 px-1.5 py-0.5 font-mono text-[9px] text-foreground/90">
+            {k.keys}
+          </kbd>
+          <span>{k.label}</span>
+        </span>
+      ))}
     </div>
   );
 }

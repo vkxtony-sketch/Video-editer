@@ -64,6 +64,8 @@ export type AnalysisArtifacts = {
   metrics: {
     durationSec: number;
     scenesDetected: number;
+    /** Full scene-change list so the caller can persist it for the timeline. */
+    scenes: { tSec: number; distance: number }[];
     silences: AudioSilence[];
     peakRms: number;
     meanRms: number;
@@ -371,6 +373,7 @@ function buildArtifacts(opts: {
     metrics: {
       durationSec: audio.durationSec,
       scenesDetected: video.sceneChanges.length,
+      scenes: video.sceneChanges.map((s) => ({ tSec: s.tSec, distance: s.distance })),
       silences: audio.silences,
       peakRms: audio.peakRms,
       meanRms: audio.meanRms,

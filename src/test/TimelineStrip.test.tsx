@@ -92,4 +92,22 @@ describe("TimelineStrip", () => {
     const playhead = container.querySelector('[style*="left: 50%"]');
     expect(playhead).toBeTruthy();
   });
+
+  it("renders dashed vertical markers when sceneMarks are provided", () => {
+    const { container } = render(
+      <TimelineStrip
+        durationSec={12 * 3600}
+        clips={clips}
+        sceneMarks={[
+          { tSec: 2 * 3600, distance: 22 },
+          { tSec: 7 * 3600, distance: 30 },
+        ]}
+        activeClipId={null}
+        scrubToSec={null}
+        onScrub={() => {}}
+      />,
+    );
+    const markers = container.querySelectorAll('[data-testid="scene-marker"]');
+    expect(markers.length).toBe(2);
+  });
 });

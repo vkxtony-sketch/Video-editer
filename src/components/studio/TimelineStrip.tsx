@@ -14,15 +14,22 @@ export type TimelineClip = {
   tags: string[];
 };
 
+export type SceneMark = {
+  tSec: number;
+  distance: number;
+};
+
 export default function TimelineStrip({
   durationSec,
   clips,
+  sceneMarks,
   activeClipId,
   scrubToSec,
   onScrub,
 }: {
   durationSec: number;
   clips: TimelineClip[];
+  sceneMarks?: SceneMark[];
   activeClipId: string | null;
   scrubToSec: number | null;
   onScrub: (sec: number) => void;
@@ -151,6 +158,30 @@ export default function TimelineStrip({
                 />
               );
             })}
+          {/* scene-change markers (from frame-hash analysis) */}
+          {sceneMarks?.map((m, i) => {
+            const left = (m.tSec / total) * 100;
+            const intensity = Math.min(1, Math.max(0, (m.distance - 10) / 30));
+            return (
+              <div
+                key={`scene-${i}-${m.tSec}`}
+                className="pointer-events-none absolute inset-y-2 w-px"
+                style={{
+                  left: `${left}%`,
+                  backgroundImage:
+                    "linear-gradient(to bottom, rgba(255,255,255,0.55) 50%, transparent 50%)",
+                  backgroundSize: "1px 4px",
+                  opacity: 0.4 + intensity * 0.5,
+                  boxShadow:
+                    intensity > 0.5
+                      ? "0 0 4px rgba(255,255,255,0.45)"
+                      : undefined,
+                }}
+                title={`Scene change at ${formatTimestamp(m.tSec)} · distance ${m.distance}/64`}
+                data-testid="scene-marker"
+              />
+            );
+          })}
           {/* playhead */}
           <div
             className="pointer-events-none absolute top-0 h-full w-px bg-foreground shadow-[0_0_8px_rgba(255,255,255,0.8)]"

@@ -61,6 +61,7 @@ export default function Dashboard() {
   const remove = useMutation(api.projects.remove);
   const create = useMutation(api.projects.create);
   const ingestAnalysis = useMutation(api.analyze.ingestAnalysis);
+  const ingestSceneMarks = useMutation(api.analyze.ingestSceneMarks);
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
@@ -136,6 +137,13 @@ export default function Dashboard() {
             captions: artifacts.captions,
             metrics: artifacts.metrics,
           });
+          // Persist scene-change markers for the TimelineStrip dashed lines.
+          if (artifacts.metrics.scenes.length > 0) {
+            await ingestSceneMarks({
+              projectId: projectId as Id<"projects">,
+              marks: artifacts.metrics.scenes,
+            });
+          }
         },
         onProgress: (p) => setAnalyzing({ stage: p.stage, frac: p.frac }),
       });
