@@ -37,6 +37,12 @@ export default defineSchema({
     activeStage: v.string(),
     overallProgress: v.number(),
     demoMode: v.boolean(),
+    /** "real" = a real LLM (e.g. Groq) generated titles/headlines. "deterministic" = pool fallback. */
+    llmMode: v.optional(
+      v.union(v.literal("real"), v.literal("deterministic")),
+    ),
+    /** Friendly label of the LLM provider used (e.g. "groq · llama-3.1-8b-instant"). */
+    llmProvider: v.optional(v.string()),
   }).index("by_project", ["projectId"]),
 
   pipelineLogs: defineTable({

@@ -81,6 +81,16 @@ export async function analyzeAndIngest(opts: {
   ownerId: string;
   ingest: (artifacts: AnalysisArtifacts) => Promise<void>;
   onProgress?: (p: AnalysisProgress) => void;
+  /**
+   * Optional LLM overlay. When provided, the caller has already queried
+   * Groq (or another LLM) with the project's metrics. Returning normalized
+   * titles + headlines here lets `buildArtifacts` replace the deterministic
+   * ones. Returning null means keep the pool fallback.
+   */
+  llmOverrides?: () => Promise<{
+    titles: TitleArtifact[] | null;
+    headlines: ThumbArtifact[] | null;
+  }>;
 }): Promise<AnalysisArtifacts> {
   const url = URL.createObjectURL(opts.file);
   try {
@@ -117,6 +127,19 @@ export async function analyzeAndIngest(opts: {
       console.warn("thumbnail capture failed:", e);
     }
 
+    // Optional LLM overlay. Best-effort — any failure keeps the pool.
+    let llmTitleOverrides: TitleArtifact[] | null = null;
+    let llmHeadlineOverrides: ThumbArtifact[] | null = null;
+    if (opts.llmOverrides) {
+      try {
+        const overlays = await opts.llmOverrides();
+        llmTitleOverrides = overlays?.titles ?? null;
+        llmHeadlineOverrides = overlays?.headlines ?? null;
+      } catch (e) {
+        console.warn("LLM overlay failed, using deterministic:", e);
+      }
+    }
+
     const artifacts = buildArtifacts({
       projectId: opts.projectId,
       audio,
@@ -125,6 +148,8 @@ export async function analyzeAndIngest(opts: {
       persona: opts.persona,
       peakWindows,
       thumbFrames,
+      llmTitleOverrides,
+      llmHeadlineOverrides,
     });
     opts.onProgress?.({ stage: "build-artifacts", frac: 1 });
 
@@ -147,8 +172,19 @@ function buildArtifacts(opts: {
   persona: string;
   peakWindows: { startSec: number; endSec: number; score: number }[];
   thumbFrames: { tSec: number; dataUrl: string }[];
+  llmTitleOverrides?: TitleArtifact[] | null;
+  llmHeadlineOverrides?: ThumbArtifact[] | null;
 }): AnalysisArtifacts {
-  const { audio, video, title, persona, peakWindows, thumbFrames } = opts;
+  const {
+    audio,
+    video,
+    title,
+    persona,
+    peakWindows,
+    thumbFrames,
+    llmTitleOverrides,
+    llmHeadlineOverrides,
+  } = opts;
   const projectId = opts.projectId;
   const thumbFrameMap = new Map(thumbFrames.map((t) => [t.tSec, t.dataUrl]));
   const highlightScores = new Map<number, number>();
@@ -292,78 +328,103 @@ function buildArtifacts(opts: {
   // Cap captions to ~30 to keep the UI readable
   const captionSlice = captions.slice(0, 30);
 
-  // ---- Titles: real metrics ----
+  // ---- Titles: real metrics (or LLM overrides when provided) ----
   const topPeak = peakWindows[0];
-  const titles: TitleArtifact[] = [
-    {
-      projectId,
-      label: "YouTube Title",
-      body: topPeak
-        ? `The loudest ${topPeak.endSec - topPeak.startSec}s starts at ${formatClock(topPeak.startSec)}`
-        : `A ${formatClock(audio.durationSec)} take on ${topic(title)}`,
-      score: 0.9,
-      style: "data-driven",
-    },
-    {
-      projectId,
-      label: "TikTok Caption",
-      body: `${video.sceneChanges.length} scene shifts in ${formatClock(audio.durationSec)} — the ${topPeak ? formatClock(topPeak.startSec) : "first"} one is the loudest`,
-      score: 0.82,
-      style: "data-driven",
-    },
-    {
-      projectId,
-      label: "X Hook",
-      body: `I ran the audio analysis on ${topic(title)}. ${audio.silences.length} silent gap${audio.silences.length === 1 ? "" : "s"}. Peak RMS ${(audio.peakRms * 100).toFixed(0)}%.`,
-      score: 0.78,
-      style: "data-driven",
-    },
-    {
-      projectId,
-      label: "LinkedIn Title",
-      body: `${formatClock(audio.durationSec)} on ${topic(title)} · ${video.sceneChanges.length} visual shifts · ${audio.silences.length} cuts`,
-      score: 0.71,
-      style: "professional",
-    },
-    {
-      projectId,
-      label: "Newsletter Subject",
-      body: `What ${video.sceneChanges.length} scene changes in ${topic(title)} tell us`,
-      score: 0.66,
-      style: "curiosity",
-    },
-  ];
-
-  // ---- Thumbnails: one per top peak, with the real frame attached ----
-  const topPeaks = peakWindows.slice(0, 5);
-  const thumbnails: ThumbArtifact[] = topPeaks.length
-    ? topPeaks.map((peak, i) => {
-        const center = Math.floor((peak.startSec + peak.endSec) / 2);
-        const sceneCount = video.sceneChanges.filter(
-          (s) => s.tSec >= peak.startSec && s.tSec <= peak.endSec,
-        ).length;
-        return {
-          projectId,
-          headline: `Peak at ${formatClock(center)}`,
-          subtext:
-            sceneCount > 0
-              ? `${sceneCount} scene shift${sceneCount === 1 ? "" : "s"} · RMS ${Math.round(peak.score * 100)}%`
-              : `Loudest moment · RMS ${Math.round(peak.score * 100)}%`,
-          palette: audio.meanRms > 0.3 ? "amber-magenta" : "cyan-magenta",
-          score: Math.round(peak.score * 100) / 100,
-          imageDataUrl: thumbFrameMap.get(center),
-        };
-      })
-    : // No peaks → fall back to a single metadata-only thumbnail.
-      [
+  const titles: TitleArtifact[] = llmTitleOverrides && llmTitleOverrides.length > 0
+    ? llmTitleOverrides.map((t, i) => ({
+        projectId,
+        label: t.label ?? ["YouTube Title", "TikTok Caption", "X Hook", "LinkedIn Title", "Newsletter Subject"][i] ?? `Title ${i + 1}`,
+        body: t.body,
+        score: t.score ?? Math.round((0.55 + (i / 10)) * 100) / 100,
+        style: t.style ?? ["data-driven", "clickbait", "matter-of-fact", "story", "curiosity"][i] ?? "data-driven",
+      }))
+    : [
         {
           projectId,
-          headline: `${formatClock(audio.durationSec)} analyzed`,
-          subtext: `${video.sceneChanges.length} scene shifts detected`,
-          palette: "cyan-magenta",
-          score: 0.7,
+          label: "YouTube Title",
+          body: topPeak
+            ? `The loudest ${topPeak.endSec - topPeak.startSec}s starts at ${formatClock(topPeak.startSec)}`
+            : `A ${formatClock(audio.durationSec)} take on ${topic(title)}`,
+          score: 0.9,
+          style: "data-driven",
+        },
+        {
+          projectId,
+          label: "TikTok Caption",
+          body: `${video.sceneChanges.length} scene shifts in ${formatClock(audio.durationSec)} — the ${topPeak ? formatClock(topPeak.startSec) : "first"} one is the loudest`,
+          score: 0.82,
+          style: "data-driven",
+        },
+        {
+          projectId,
+          label: "X Hook",
+          body: `I ran the audio analysis on ${topic(title)}. ${audio.silences.length} silent gap${audio.silences.length === 1 ? "" : "s"}. Peak RMS ${(audio.peakRms * 100).toFixed(0)}%.`,
+          score: 0.78,
+          style: "data-driven",
+        },
+        {
+          projectId,
+          label: "LinkedIn Title",
+          body: `${formatClock(audio.durationSec)} on ${topic(title)} · ${video.sceneChanges.length} visual shifts · ${audio.silences.length} cuts`,
+          score: 0.71,
+          style: "professional",
+        },
+        {
+          projectId,
+          label: "Newsletter Subject",
+          body: `What ${video.sceneChanges.length} scene changes in ${topic(title)} tell us`,
+          score: 0.66,
+          style: "curiosity",
         },
       ];
+
+  // ---- Thumbnails: one per top peak (or LLM overrides), with the real frame attached ----
+  const topPeaks = peakWindows.slice(0, 5);
+  const paletteByIndex = ["cyan-magenta", "violet-amber", "cyan-lime", "amber-magenta", "cyan-lab"];
+  const thumbnails: ThumbArtifact[] =
+    llmHeadlineOverrides && llmHeadlineOverrides.length > 0
+      ? llmHeadlineOverrides.slice(0, 5).map((ov, i) => {
+          const peak = topPeaks[i];
+          const center = peak ? Math.floor((peak.startSec + peak.endSec) / 2) : 0;
+          return {
+            projectId,
+            headline: ov.headline ?? `Peak at ${formatClock(center)}`,
+            subtext: ov.subtext ?? (peak
+              ? `RMS ${Math.round(peak.score * 100)}%`
+              : ""),
+            palette: ov.palette ?? paletteByIndex[i] ?? "cyan-magenta",
+            score: ov.score ?? (peak ? Math.round(peak.score * 100) / 100 : 0.7),
+            imageDataUrl: peak ? thumbFrameMap.get(center) : undefined,
+          };
+        })
+      : topPeaks.length
+        ? topPeaks.map((peak, i) => {
+            const center = Math.floor((peak.startSec + peak.endSec) / 2);
+            const sceneCount = video.sceneChanges.filter(
+              (s) => s.tSec >= peak.startSec && s.tSec <= peak.endSec,
+            ).length;
+            return {
+              projectId,
+              headline: `Peak at ${formatClock(center)}`,
+              subtext:
+                sceneCount > 0
+                  ? `${sceneCount} scene shift${sceneCount === 1 ? "" : "s"} · RMS ${Math.round(peak.score * 100)}%`
+                  : `Loudest moment · RMS ${Math.round(peak.score * 100)}%`,
+              palette: audio.meanRms > 0.3 ? "amber-magenta" : "cyan-magenta",
+              score: Math.round(peak.score * 100) / 100,
+              imageDataUrl: thumbFrameMap.get(center),
+            };
+          })
+        : // No peaks → fall back to a single metadata-only thumbnail.
+          [
+            {
+              projectId,
+              headline: `${formatClock(audio.durationSec)} analyzed`,
+              subtext: `${video.sceneChanges.length} scene shifts detected`,
+              palette: "cyan-magenta",
+              score: 0.7,
+            },
+          ];
 
   return {
     clips,

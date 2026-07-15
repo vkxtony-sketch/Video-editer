@@ -279,6 +279,8 @@ export default function Studio() {
         source={project.source}
         audioCutCount={project.audioCutCount ?? 0}
         audioScanDone={project.audioScanDone ?? false}
+        llmMode={runRow?.llmMode}
+        llmProvider={runRow?.llmProvider ?? null}
       />
 
       <div className="grid grid-cols-1 gap-3 px-3 py-3 lg:grid-cols-12">

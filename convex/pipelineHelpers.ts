@@ -8,6 +8,10 @@ export const _createRun = mutation({
     activeStage: v.string(),
     overallProgress: v.number(),
     demoMode: v.boolean(),
+    llmMode: v.optional(
+      v.union(v.literal("real"), v.literal("deterministic")),
+    ),
+    llmProvider: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     return await ctx.db.insert("pipelineRuns", args);
@@ -143,12 +147,18 @@ export const _finishRun = mutation({
     projectId: v.id("projects"),
     activeStage: v.string(),
     overallProgress: v.number(),
+    llmMode: v.optional(
+      v.union(v.literal("real"), v.literal("deterministic")),
+    ),
+    llmProvider: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     await ctx.db.patch(args.runId, {
       activeStage: args.activeStage,
       overallProgress: args.overallProgress,
       finishedAt: Date.now(),
+      llmMode: args.llmMode,
+      llmProvider: args.llmProvider,
     });
   },
 });

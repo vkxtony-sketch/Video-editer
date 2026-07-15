@@ -352,6 +352,7 @@ export const runPipeline = action({
       activeStage: STAGES[0].label,
       overallProgress: 0,
       demoMode: true,
+      llmMode: "deterministic",
     });
 
     await ctx.runMutation(api.projects.setStatus, {
@@ -408,23 +409,68 @@ export const runPipeline = action({
       clips: [...clips, ...shorts, ...chapters, ...cuts],
     });
 
-    const titles = pickTitles(seed, project.title).slice(0, 5).map((body, i) => ({
+    // ---- Real LLM narrative (Groq) when GROQ_API_KEY is present; pool fallback otherwise.
+    let llmMode: "real" | "deterministic" = "deterministic";
+    let llmProvider: string | null = null;
+    let llmTitles: ReturnType<typeof pickTitles> | null = null;
+    let llmHeadlines: ReturnType<typeof pickHeadlines> | null = null;
+
+    try {
+      // Rough scene-change + silence heuristics for the LLM prompt. Demo /
+      // url sources don't have real metrics, so we fall back to deterministic
+      // estimates derived from duration. The LLM still gets *some* signal.
+      const roughScenes = Math.max(
+        4,
+        Math.min(180, Math.round(project.durationSec / 240)),
+      );
+      const roughSilences = Math.round(project.durationSec / 90);
+      const roughPeakRms = 0.7;
+      const roughMeanRms = 0.35;
+      const llmResult = await ctx.runAction(api.llm.generateNarrative, {
+        title: project.title,
+        persona: project.persona ?? "long-form",
+        durationSec: project.durationSec,
+        scenesDetected: roughScenes,
+        silencesCount: roughSilences,
+        peakRms: roughPeakRms,
+        meanRms: roughMeanRms,
+      });
+      if (llmResult.ok && llmResult.mode === "real" && llmResult.payload) {
+        llmMode = "real";
+        llmProvider = llmResult.provider;
+        llmTitles = llmResult.payload.titles.map((t) => t.body);
+        llmHeadlines = llmResult.payload.headlines.map((h) => ({
+          headline: h.headline,
+          sub: h.subtext,
+        }));
+      }
+    } catch (e) {
+      console.warn("[pipeline] LLM narrative failed, using deterministic pool:", e);
+    }
+
+    const titleBodies = (llmTitles ?? pickTitles(seed, project.title)).slice(0, 5);
+    const titles = titleBodies.map((body, i) => ({
       projectId: args.projectId,
-      label: ["YouTube Title", "TikTok Caption", "X Hook", "LinkedIn Title", "Newsletter Subject"][i],
+      label: (llmTitles
+        ? ["YouTube Title", "TikTok Caption", "X Hook", "LinkedIn Title", "Newsletter Subject"][i]
+        : ["YouTube Title", "TikTok Caption", "X Hook", "LinkedIn Title", "Newsletter Subject"][i]),
       body,
       score: Math.round((0.55 + (i / 10)) * 100) / 100,
-      style: ["plain", "clickbait", "matter-of-fact", "story", "curiosity"][i],
+      style: llmTitles
+        ? ["data-driven", "clickbait", "matter-of-fact", "story", "curiosity"][i]
+        : ["plain", "clickbait", "matter-of-fact", "story", "curiosity"][i],
     }));
     await ctx.runMutation(api.pipelineHelpers._writeTitles, {
       projectId: args.projectId,
       titles,
     });
 
-    const thumbs = pickHeadlines(seed, project.title).map((h, i) => ({
+    const headlines = (llmHeadlines ?? pickHeadlines(seed, project.title)).slice(0, 5);
+    const thumbs = headlines.map((h, i) => ({
       projectId: args.projectId,
       headline: h.headline,
       subtext: h.sub,
-      palette: ["cyan-magenta", "violet-amber", "cyan-lime", "amber-magenta", "cyan-lab", "violet"][i],
+      palette: ["cyan-magenta", "violet-amber", "cyan-lime", "amber-magenta", "cyan-lab"][i],
       score: Math.round((0.55 + (i / 10)) * 100) / 100,
     }));
     await ctx.runMutation(api.pipelineHelpers._writeThumbnails, {
@@ -446,6 +492,8 @@ export const runPipeline = action({
       projectId: args.projectId,
       activeStage: "QC · Quality Assurance",
       overallProgress: 100,
+      llmMode,
+      llmProvider: llmProvider ?? undefined,
     });
 
     await ctx.runMutation(api.projects.setStatus, {

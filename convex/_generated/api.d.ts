@@ -8,7 +8,9 @@
  * @module
  */
 
+import type * as _narrativeHelpers from "../_narrativeHelpers.js";
 import type * as analyze from "../analyze.js";
+import type * as llm from "../llm.js";
 import type * as pipeline from "../pipeline.js";
 import type * as pipelineHelpers from "../pipelineHelpers.js";
 import type * as projects from "../projects.js";
@@ -21,7 +23,9 @@ import type {
 } from "convex/server";
 
 declare const fullApi: ApiFromModules<{
+  _narrativeHelpers: typeof _narrativeHelpers;
   analyze: typeof analyze;
+  llm: typeof llm;
   pipeline: typeof pipeline;
   pipelineHelpers: typeof pipelineHelpers;
   projects: typeof projects;
