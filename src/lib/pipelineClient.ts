@@ -7,7 +7,7 @@
 // source. Demo + url sources still fall through to `runPipeline`.
 
 import { analyzeAudio, findEnergyPeaks, type AudioAnalysis, type AudioSilence } from "./audioAnalysis";
-import { analyzeVideo, type VideoAnalysis, type SceneChange } from "./videoAnalysis";
+import { analyzeVideo, extractThumbnails, type VideoAnalysis, type SceneChange } from "./videoAnalysis";
 import type { Id } from "../../convex/_generated/dataModel";
 
 export type AnalysisProgress =
@@ -43,6 +43,8 @@ export type ThumbArtifact = {
   subtext: string;
   palette: string;
   score: number;
+  /** Real JPEG frame captured from the source video, if available. */
+  imageDataUrl?: string;
 };
 
 export type CaptionArtifact = {
@@ -99,12 +101,28 @@ export async function analyzeAndIngest(opts: {
 
     // Stage 3: build artifacts from REAL data
     opts.onProgress?.({ stage: "build-artifacts", frac: 0 });
+
+    // Capture real frame thumbnails at the top energy peaks (best-effort;
+    // any failure falls back to palette-only thumbs so the UI still works).
+    const peakWindows = findEnergyPeaks(audio.bins, audio.durationSec, 6, 45);
+    let thumbFrames: { tSec: number; dataUrl: string }[] = [];
+    try {
+      const captured = await extractThumbnails(url, peakWindows, 5, (frac) => {
+        opts.onProgress?.({ stage: "build-artifacts", frac: frac * 0.5 });
+      });
+      thumbFrames = captured.map((c) => ({ tSec: c.tSec, dataUrl: c.dataUrl }));
+    } catch (e) {
+      console.warn("thumbnail capture failed:", e);
+    }
+
     const artifacts = buildArtifacts({
       projectId: opts.projectId,
       audio,
       video,
       title: opts.title,
       persona: opts.persona,
+      peakWindows,
+      thumbFrames,
     });
     opts.onProgress?.({ stage: "build-artifacts", frac: 1 });
 
@@ -125,12 +143,12 @@ function buildArtifacts(opts: {
   video: VideoAnalysis;
   title: string;
   persona: string;
+  peakWindows: { startSec: number; endSec: number; score: number }[];
+  thumbFrames: { tSec: number; dataUrl: string }[];
 }): AnalysisArtifacts {
-  const { audio, video, title, persona } = opts;
+  const { audio, video, title, persona, peakWindows, thumbFrames } = opts;
   const projectId = opts.projectId;
-
-  // ---- Highlights: real energy peaks + nearby scene changes ----
-  const peakWindows = findEnergyPeaks(audio.bins, audio.durationSec, 6, 45);
+  const thumbFrameMap = new Map(thumbFrames.map((t) => [t.tSec, t.dataUrl]));
   const highlightScores = new Map<number, number>();
   for (const w of peakWindows) {
     const sceneCount = video.sceneChanges.filter(
@@ -314,44 +332,36 @@ function buildArtifacts(opts: {
     },
   ];
 
-  // ---- Thumbnails: metrics-driven palettes (always present, but data-linked) ----
-  const thumbnails: ThumbArtifact[] = [
-    {
-      projectId,
-      headline: `${video.sceneChanges.length} visual shifts.`,
-      subtext: `${formatClock(audio.durationSec)} analyzed`,
-      palette: audio.meanRms > 0.3 ? "amber-magenta" : "cyan-magenta",
-      score: 0.88,
-    },
-    {
-      projectId,
-      headline: `Peak at ${formatClock(topPeak?.startSec ?? 0)}.`,
-      subtext: `${Math.round((audio.peakRms || 0) * 100)}% RMS loudest moment`,
-      palette: "violet-amber",
-      score: 0.82,
-    },
-    {
-      projectId,
-      headline: `${audio.silences.filter((s) => s.kind === "dead").length} dead-air gaps.`,
-      subtext: "Auto-editable · fill or trim",
-      palette: "cyan-lime",
-      score: 0.74,
-    },
-    {
-      projectId,
-      headline: topic(title).split(" ").slice(0, 2).join(" "),
-      subtext: "What the data says",
-      palette: "cyan-lab",
-      score: 0.7,
-    },
-    {
-      projectId,
-      headline: persona || "Source analysis",
-      subtext: `${video.sceneChanges.length} scene cuts mapped`,
-      palette: "cyan-magenta",
-      score: 0.65,
-    },
-  ];
+  // ---- Thumbnails: one per top peak, with the real frame attached ----
+  const topPeaks = peakWindows.slice(0, 5);
+  const thumbnails: ThumbArtifact[] = topPeaks.length
+    ? topPeaks.map((peak, i) => {
+        const center = Math.floor((peak.startSec + peak.endSec) / 2);
+        const sceneCount = video.sceneChanges.filter(
+          (s) => s.tSec >= peak.startSec && s.tSec <= peak.endSec,
+        ).length;
+        return {
+          projectId,
+          headline: `Peak at ${formatClock(center)}`,
+          subtext:
+            sceneCount > 0
+              ? `${sceneCount} scene shift${sceneCount === 1 ? "" : "s"} · RMS ${Math.round(peak.score * 100)}%`
+              : `Loudest moment · RMS ${Math.round(peak.score * 100)}%`,
+          palette: audio.meanRms > 0.3 ? "amber-magenta" : "cyan-magenta",
+          score: Math.round(peak.score * 100) / 100,
+          imageDataUrl: thumbFrameMap.get(center),
+        };
+      })
+    : // No peaks → fall back to a single metadata-only thumbnail.
+      [
+        {
+          projectId,
+          headline: `${formatClock(audio.durationSec)} analyzed`,
+          subtext: `${video.sceneChanges.length} scene shifts detected`,
+          palette: "cyan-magenta",
+          score: 0.7,
+        },
+      ];
 
   return {
     clips,

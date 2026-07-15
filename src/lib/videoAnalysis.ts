@@ -155,3 +155,93 @@ function hamming64(n: number): number {
   n = (n & 0x33333333) + ((n >> 2) & 0x33333333);
   return (((n + (n >> 4)) & 0x0f0f0f0f) * 0x01010101) >> 24;
 }
+
+export type CapturedThumbnail = {
+  tSec: number;
+  dataUrl: string;
+  width: number;
+  height: number;
+};
+
+/**
+ * Pure helper — encode a Canvas as a JPEG data URL. Extracted so it can be
+ * unit-tested in isolation without needing a real HTMLVideoElement.
+ */
+export function jpegFromCanvas(canvas: HTMLCanvasElement, quality = 0.7): string {
+  return canvas.toDataURL("image/jpeg", quality);
+}
+
+/**
+ * Capture up to `count` real frame thumbnails from a video URL, one at each
+ * peak moment. Each capture is a 480×270 JPEG data URL — small enough
+ * (~10–20 KB) to store inline in Convex documents.
+ *
+ * Returns an array (possibly shorter than `count` if the browser can't
+ * decode a particular seek target). On failure, returns [] so the caller
+ * can fall back to palette-only thumbnails gracefully.
+ */
+export async function extractThumbnails(
+  url: string,
+  peaks: { startSec: number; endSec: number; score: number }[],
+  count = 5,
+  onProgress?: (frac: number) => void,
+): Promise<CapturedThumbnail[]> {
+  if (peaks.length === 0) return [];
+  const video = document.createElement("video");
+  video.src = url;
+  video.crossOrigin = "anonymous";
+  video.preload = "auto";
+  video.muted = true;
+  video.playsInline = true;
+
+  await new Promise<void>((resolve, reject) => {
+    const onLoaded = () => {
+      video.removeEventListener("loadedmetadata", onLoaded);
+      video.removeEventListener("error", onErr);
+      resolve();
+    };
+    const onErr = () => {
+      video.removeEventListener("loadedmetadata", onLoaded);
+      video.removeEventListener("error", onErr);
+      reject(new Error("video metadata failed to load"));
+    };
+    video.addEventListener("loadedmetadata", onLoaded);
+    video.addEventListener("error", onErr);
+  });
+
+  const width = 480;
+  const height = 270;
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) {
+    video.removeAttribute("src");
+    video.load();
+    return [];
+  }
+
+  const out: CapturedThumbnail[] = [];
+  const top = peaks.slice(0, count);
+  for (let i = 0; i < top.length; i++) {
+    const center = Math.floor((top[i].startSec + top[i].endSec) / 2);
+    await seekVideo(video, center);
+    try {
+      ctx.drawImage(video, 0, 0, width, height);
+      out.push({
+        tSec: center,
+        dataUrl: jpegFromCanvas(canvas),
+        width,
+        height,
+      });
+    } catch {
+      // some browsers throw if the frame hasn't decoded enough yet — skip
+      continue;
+    }
+    onProgress?.((i + 1) / top.length);
+  }
+
+  video.removeAttribute("src");
+  video.load();
+  return out;
+}

@@ -79,6 +79,7 @@ export default defineSchema({
     subtext: v.string(),
     palette: v.string(),
     score: v.number(),
+    imageDataUrl: v.optional(v.string()),
   }).index("by_project", ["projectId"]),
 
   captions: defineTable({

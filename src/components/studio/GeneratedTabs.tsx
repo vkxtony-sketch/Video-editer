@@ -18,6 +18,7 @@ export type ThumbItem = {
   subtext: string;
   palette: string;
   score: number;
+  imageDataUrl?: string;
 };
 
 export type CaptionItem = {
@@ -101,9 +102,17 @@ export default function GeneratedTabs({
                   className="overflow-hidden rounded-lg border border-border/70"
                 >
                   <div
-                    className={`relative aspect-video ${paletteFor(t.palette)}`}
+                    className={`relative aspect-video overflow-hidden ${paletteFor(t.palette)}`}
                   >
-                    <div className="absolute inset-0 border-grid opacity-30" />
+                    {t.imageDataUrl ? (
+                      <img
+                        src={t.imageDataUrl}
+                        alt={t.headline}
+                        loading="lazy"
+                        className="absolute inset-0 h-full w-full object-cover"
+                      />
+                    ) : null}
+                    <div className={t.imageDataUrl ? "absolute inset-0 bg-gradient-to-t from-black/80 via-black/30 to-transparent" : "absolute inset-0 border-grid opacity-30"} />
                     <div className="absolute bottom-2 left-2 right-2">
                       <div className="font-serif text-lg font-extrabold leading-tight text-white drop-shadow-[0_0_8px_rgba(0,0,0,0.6)]">
                         {t.headline}

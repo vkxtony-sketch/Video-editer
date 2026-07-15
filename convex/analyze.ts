@@ -36,6 +36,7 @@ const ThumbShape = v.object({
   subtext: v.string(),
   palette: v.string(),
   score: v.number(),
+  imageDataUrl: v.optional(v.string()),
 });
 
 const CaptionShape = v.object({
