@@ -146,7 +146,6 @@ function pickClips(durationSec: number) {
     const start = Math.floor(120 + rand() * Math.max(120, durationSec - 240));
     const len = Math.floor(40 + rand() * 220);
     out.push({
-      projectId: undefined as unknown as string,
       kind: "highlight" as const,
       title: titles[i % titles.length],
       startSec: start,
@@ -170,7 +169,6 @@ function pickShorts(durationSec: number) {
     const start = Math.floor(180 + rand() * Math.max(180, durationSec - 360));
     const len = 20 + Math.floor(rand() * 70);
     out.push({
-      projectId: undefined as unknown as string,
       kind: "short" as const,
       title: ["POV:", "Wait for it…", "Watch this part only.", "Listen closely.",
         "This one line.", "Don't skip this.", "The ending.", "60-second version."
@@ -205,7 +203,6 @@ function pickChapters(durationSec: number) {
   for (let i = 0; i < count; i++) {
     const dur = Math.floor(durationSec / count);
     out.push({
-      projectId: undefined as unknown as string,
       kind: "chapter" as const,
       title: chapterLabels[i],
       startSec: t,
@@ -229,7 +226,6 @@ function pickCuts(durationSec: number) {
   for (let i = 0; i < count; i++) {
     const dur = 1 + Math.floor(rand() * 6);
     out.push({
-      projectId: undefined as unknown as string,
       kind: "cut" as const,
       title: dur > 3 ? "Long dead pause" : "Micro-pause",
       startSec: t,

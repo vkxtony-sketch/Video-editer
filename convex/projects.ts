@@ -1,12 +1,9 @@
 import { v } from "convex/values";
 import { mutation, query } from "./_generated/server";
 
-function randomId(): string {
-  return "u_" + Math.random().toString(36).slice(2, 10);
-}
-
 export const create = mutation({
   args: {
+    ownerId: v.string(),
     title: v.string(),
     source: v.union(
       v.literal("upload"),
@@ -22,7 +19,7 @@ export const create = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    const ownerId = randomId();
+    const ownerId = args.ownerId.trim() || ("u_" + Math.random().toString(36).slice(2, 10));
     const projectId = await ctx.db.insert("projects", {
       title: args.title,
       source: args.source,
