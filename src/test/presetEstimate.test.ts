@@ -96,14 +96,15 @@ describe("presetEstimate", () => {
     it("renders the full legend string with count / avg / size / encode", () => {
       const r = estimateRender({ preset: "ultrafast", clipCount: 12, totalSec: 72 });
       const out = formatEstimate(r);
-      expect(out).toMatch(/^12 clips × ~6s avg → ~45 MB · 18s encode/);
+      // 5 Mbps × 72s ÷ 8 = 45.0 MB; encode @ 0.25× = 18s
+      expect(out).toMatch(/^12 clips × ~6s avg → ~45\.0 MB · 18s encode/);
       expect(out).toMatch(/\(est\. 720p30\)/);
     });
 
     it("switches encode label to minutes for long reels", () => {
       const r = estimateRender({ preset: "medium", clipCount: 30, totalSec: 240 });
-      // 240 × 2.5 = 600s → expect ".0 min"
-      expect(formatEstimate(r)).toMatch(/1\.0 min encode/);
+      // 240s × 2.5 = 600s → 10 min encode
+      expect(formatEstimate(r)).toMatch(/10 min encode/);
     });
 
     it("renders KB when the predicted output is under 1 MB", () => {

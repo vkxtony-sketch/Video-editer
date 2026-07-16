@@ -101,11 +101,12 @@ describe("ProjectHeader", () => {
       });
       const legend = screen.getByTestId("preset-legend");
       expect(legend).toBeInTheDocument();
-      expect(legend).toHaveTextContent(/12 clips/);
-      expect(legend).toHaveTextContent(/× ~6s avg/);
-      expect(legend).toHaveTextContent(/45 MB/);
-      expect(legend).toHaveTextContent(/18s encode/);
-      expect(legend).toHaveTextContent(/\(est\. 720p30\)/);
+      // 5 Mbps × 72s ÷ 8 → 45.0 MB; encode @ 0.25× = 18s
+      expect(legend).toHaveTextContent("12 clips");
+      expect(legend).toHaveTextContent("~6s avg");
+      expect(legend).toHaveTextContent("45.0 MB");
+      expect(legend).toHaveTextContent("18s encode");
+      expect(legend).toHaveTextContent("(est. 720p30)");
     });
 
     it("renders the dash placeholder when clipCount is 0", () => {
@@ -118,7 +119,21 @@ describe("ProjectHeader", () => {
       expect(screen.getByTestId("preset-legend")).toHaveTextContent("—");
     });
 
-    it("updates its predictions when the preset changes", () => {
+    it("renders medium-preset numbers (smaller file, longer encode) in the legend", () => {
+      renderHeader({
+        preset: "medium",
+        onPresetChange: vi.fn(),
+        clipCount: 12,
+        totalSec: 72,
+      });
+      // medium: 1.5 Mbps × 72s ÷ 8 = 13.5 MB; encode @ 2.5× = 180s = 3.0 min
+      const legend = screen.getByTestId("preset-legend");
+      expect(legend).toHaveTextContent("13.5 MB");
+      expect(legend).toHaveTextContent("3.0 min encode");
+    });
+
+    it("reacts to preset change by re-rendering the legend", async () => {
+      const user = userEvent.setup();
       function Wrapper() {
         const [p, setP] = useState<RenderPreset>("ultrafast");
         return (
@@ -143,10 +158,12 @@ describe("ProjectHeader", () => {
           <Wrapper />
         </MemoryRouter>,
       );
-      // medium: 1.5 Mbps × 72s = 13.5 MB encode @ 2.5× = 180s = 3.0 min
-      expect(screen.getByTestId("preset-legend")).toHaveTextContent(
-        /13\.5 MB · 3\.0 min encode/,
-      );
+      // Open the picker → click "Smallest file" = medium → legend should flip
+      await user.click(screen.getByRole("button", { name: /Fastest/i }));
+      await user.click(screen.getByRole("option", { name: /Smallest file/i }));
+      const legend = screen.getByTestId("preset-legend");
+      expect(legend).toHaveTextContent("13.5 MB");
+      expect(legend).toHaveTextContent("3.0 min encode");
     });
   });
 });

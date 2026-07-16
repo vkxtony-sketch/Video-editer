@@ -78,8 +78,16 @@ export type EstimateResult = {
 export function estimateRender(input: EstimateInputs): EstimateResult {
   const { preset, clipCount, totalSec } = input;
   const profile = PRESET_PROFILES[preset];
-  const safeCount = Math.max(0, clipCount | 0);
-  const safeTotal = Math.max(0, totalSec);
+  // Number.isFinite guards prevent NaN/Infinity from leaking into the
+  // result (the caller may pass undefined-like values when the
+  // Studio query is still loading). Floors clipCount so a stray 7.9
+  // never reports a fractional clip.
+  const safeCount = Number.isFinite(clipCount)
+    ? Math.max(0, Math.floor(clipCount))
+    : 0;
+  const safeTotal = Number.isFinite(totalSec)
+    ? Math.max(0, totalSec)
+    : 0;
   const avgSecPerClip = safeCount > 0 ? safeTotal / safeCount : 0;
   const outputMB = safeTotal === 0
     ? 0
