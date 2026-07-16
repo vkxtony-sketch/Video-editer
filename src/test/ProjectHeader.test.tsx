@@ -126,10 +126,10 @@ describe("ProjectHeader", () => {
         clipCount: 12,
         totalSec: 72,
       });
-      // medium: 1.5 Mbps × 72s ÷ 8 = 13.5 MB; encode @ 2.5× = 180s = 3.0 min
+      // medium: 1.5 Mbps × 72s ÷ 8 = 13.5 MB; encode @ 2.5× = 180s = 3 min
       const legend = screen.getByTestId("preset-legend");
       expect(legend).toHaveTextContent("13.5 MB");
-      expect(legend).toHaveTextContent("3.0 min encode");
+      expect(legend).toHaveTextContent("3 min encode");
     });
 
     it("reacts to preset change by re-rendering the legend", async () => {
@@ -163,7 +163,7 @@ describe("ProjectHeader", () => {
       await user.click(screen.getByRole("option", { name: /Smallest file/i }));
       const legend = screen.getByTestId("preset-legend");
       expect(legend).toHaveTextContent("13.5 MB");
-      expect(legend).toHaveTextContent("3.0 min encode");
+      expect(legend).toHaveTextContent("3 min encode");
     });
   });
 });
