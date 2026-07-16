@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { useAction, useMutation, useQuery } from "convex/react";
+import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
 import ProjectHeader from "../components/studio/ProjectHeader";
@@ -135,7 +136,11 @@ export default function Studio() {
         project.source === "url");
     if (!startedOnce && needsDemoRun) {
       setStartedOnce(true);
-      run({ projectId }).catch(() => {});
+      run({ projectId }).catch((e) => {
+        toast.error("Pipeline failed to start", {
+          description: e instanceof Error ? e.message : String(e),
+        });
+      });
     }
   }, [project?.status, project?.source, project, run, projectId, startedOnce]);
 
@@ -159,6 +164,9 @@ export default function Studio() {
         }
       } catch (e) {
         console.warn("audio scan failed", e);
+        toast.error("Real audio scan failed", {
+          description: e instanceof Error ? e.message : String(e),
+        });
       } finally {
         setAudioScanRunning(false);
       }
@@ -260,7 +268,11 @@ export default function Studio() {
     navigate("/dashboard");
   }
   function rerun() {
-    run({ projectId }).catch(() => {});
+    run({ projectId }).catch((e) => {
+      toast.error("Pipeline re-run failed", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    });
   }
 
   return (
@@ -341,27 +353,41 @@ export default function Studio() {
         />
       </div>
 
-      <ShortcutLegend
-        highlightCount={derivedHighs.length}
-        onShare={() => {
-          if (typeof window === "undefined") return;
-          const url = window.location.href;
-          if (navigator.clipboard?.writeText) {
-            navigator.clipboard.writeText(url).catch(() => {});
-          }
-        }}
-      />
+      <ShortcutLegend highlightCount={derivedHighs.length} />
     </div>
   );
 }
 
-function ShortcutLegend({
-  highlightCount,
-  onShare,
-}: {
-  highlightCount: number;
-  onShare: () => void;
-}) {
+function ShortcutLegend({ highlightCount }: { highlightCount: number }) {
+  const [copied, setCopied] = useState(false);
+  const copyTimer = useRef<number | null>(null);
+  useEffect(() => {
+    return () => {
+      if (copyTimer.current != null) window.clearTimeout(copyTimer.current);
+    };
+  }, []);
+  function handleShare() {
+    if (typeof window === "undefined") return;
+    const url = window.location.href;
+    if (!navigator.clipboard?.writeText) {
+      toast.error("Clipboard unavailable", {
+        description: "Your browser does not expose navigator.clipboard.",
+      });
+      return;
+    }
+    navigator.clipboard
+      .writeText(url)
+      .then(() => {
+        setCopied(true);
+        if (copyTimer.current != null) window.clearTimeout(copyTimer.current);
+        copyTimer.current = window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch((e) => {
+        toast.error("Could not copy link", {
+          description: e instanceof Error ? e.message : String(e),
+        });
+      });
+  }
   const keys: { keys: string; label: string }[] = [
     { keys: "Space / K", label: "Play / Pause" },
     { keys: "J / L", label: "Seek ±5s" },
@@ -391,12 +417,27 @@ function ShortcutLegend({
         </span>
       ))}
       <button
-        onClick={onShare}
+        onClick={handleShare}
         data-testid="copy-share-link"
-        className="ml-auto inline-flex items-center gap-1.5 rounded border border-border/80 bg-secondary/60 px-2 py-1 text-[10px] text-foreground hover:border-accent/60 hover:text-accent"
+        data-copied={copied ? "true" : "false"}
+        className={`ml-auto inline-flex items-center gap-1.5 rounded border px-2 py-1 text-[10px] transition ${
+          copied
+            ? "border-accent/60 bg-accent/15 text-accent"
+            : "border-border/80 bg-secondary/60 text-foreground hover:border-accent/60 hover:text-accent"
+        }`}
         title="Copy a shareable link to this exact view (tab + highlight + scrub position)"
       >
-        <span className="font-mono">⌘</span>Copy share link
+        {copied ? (
+          <>
+            <span className="font-mono text-[10px]" aria-hidden="true">✓</span>
+            Copied
+          </>
+        ) : (
+          <>
+            <span className="font-mono" aria-hidden="true">⌘</span>
+            Copy share link
+          </>
+        )}
       </button>
     </div>
   );

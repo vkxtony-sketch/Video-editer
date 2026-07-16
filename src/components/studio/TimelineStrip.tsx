@@ -40,6 +40,7 @@ export default function TimelineStrip({
   const total = Math.max(durationSec, 60);
   const trackRef = useRef<HTMLDivElement | null>(null);
   const [ticks, setTicks] = useState(12);
+  const [hoverSec, setHoverSec] = useState<number | null>(null);
   useEffect(() => {
     function update() {
       if (!trackRef.current) return;
@@ -58,6 +59,17 @@ export default function TimelineStrip({
     const rect = trackRef.current.getBoundingClientRect();
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
     onScrub(Math.floor(ratio * total));
+  }
+
+  function handleMove(e: React.MouseEvent) {
+    if (!trackRef.current) return;
+    const rect = trackRef.current.getBoundingClientRect();
+    if (rect.width === 0) return;
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    setHoverSec(Math.floor(ratio * total));
+  }
+  function handleLeave() {
+    setHoverSec(null);
   }
 
   const playhead =
@@ -85,8 +97,26 @@ export default function TimelineStrip({
         <div
           ref={trackRef}
           onClick={handle}
+          onMouseMove={handleMove}
+          onMouseLeave={handleLeave}
+          role="slider"
+          aria-label="Timeline scrubber"
+          aria-valuemin={0}
+          aria-valuemax={total}
+          aria-valuenow={scrubToSec != null ? Math.floor(scrubToSec) : 0}
+          data-testid="timeline-track"
           className="relative h-28 w-full cursor-pointer select-none overflow-hidden rounded-lg border border-border/60 bg-[#06070d]"
         >
+          {/* hover-scrub preview tooltip */}
+          {hoverSec != null && (
+            <div
+              className="pointer-events-none absolute -top-7 z-30 -translate-x-1/2 whitespace-nowrap rounded border border-primary/40 bg-background/85 px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide text-primary shadow-[0_0_12px_rgba(0,243,255,0.35)] backdrop-blur"
+              style={{ left: `${(hoverSec / total) * 100}%` }}
+              data-testid="timeline-hover-tooltip"
+            >
+              {formatTimestamp(hoverSec)}
+            </div>
+          )}
           <div className="absolute inset-0 border-grid opacity-20" />
           {/* hour tick marks */}
           <div className="absolute inset-0">

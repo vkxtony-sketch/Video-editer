@@ -357,9 +357,10 @@ const VideoPreview = forwardRef<VideoControlRef, PreviewProps>(function VideoPre
           </div>
         )}
 
-        {/* Waveform canvas — only meaningful when an audio source is loaded. */}
+        {/* Waveform canvas — only meaningful when an audio source is loaded.
+            Positioned above the playback-controls strip so they never overlap. */}
         {playable && (
-          <div className="pointer-events-none absolute inset-x-0 bottom-12">
+          <div className="pointer-events-none absolute inset-x-0 bottom-24">
             <canvas
               ref={canvasRef}
               className="block h-12 w-full"
