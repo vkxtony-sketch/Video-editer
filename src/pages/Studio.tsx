@@ -260,6 +260,22 @@ export default function Studio() {
 
   const derivedLogs: LogLine[] = logs ?? [];
   const derivedClips = clips ?? [];
+  // Same filter / sort / slice logic the Export handler uses — exposed
+  // here so the per‑clip legend under the preset dropdown stays in sync
+  // with what we'll actually render.
+  const derivedExportCandidates = derivedClips
+    .filter(
+      (c) =>
+        c.kind === "highlight" || c.kind === "short" || c.kind === "chapter",
+    )
+    .slice()
+    .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+    .slice(0, 12);
+  const derivedExportCount = derivedExportCandidates.length;
+  const derivedExportTotalSec = derivedExportCandidates.reduce(
+    (sum, c) => sum + Math.max(0, (c.endSec ?? 0) - (c.startSec ?? 0)),
+    0,
+  );
   const derivedHighs: HighlightItem[] = highlightItems;
   const derivedTitles: TitleItem[] = titles ?? [];
   const derivedThumbs: ThumbItem[] = thumbs ?? [];
@@ -431,6 +447,8 @@ export default function Studio() {
         preset={prefs.preset}
         onPresetChange={(p) => setPrefs({ preset: p })}
         exportDisabled={isExporting}
+        clipCount={derivedExportCount}
+        totalSec={derivedExportTotalSec}
       />
 
       <div className="grid grid-cols-1 gap-3 px-3 py-3 lg:grid-cols-12">

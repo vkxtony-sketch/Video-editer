@@ -1,8 +1,10 @@
+import { useState } from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import ProjectHeader from "../components/studio/ProjectHeader";
+import type { RenderPreset } from "../lib/useLocalStorage";
 
 describe("ProjectHeader", () => {
   function renderHeader(props: Partial<Parameters<typeof ProjectHeader>[0]> = {}) {
@@ -87,5 +89,64 @@ describe("ProjectHeader", () => {
     expect(screen.queryByTestId("badge-llm-real")).toBeNull();
     expect(screen.queryByTestId("badge-llm-deterministic")).toBeNull();
     expect(screen.queryByTestId("badge-llm-fixture")).toBeNull();
+  });
+
+  describe("preset legend", () => {
+    it("renders legend beneath the PresetPicker when clipCount + totalSec are provided", () => {
+      renderHeader({
+        preset: "ultrafast",
+        onPresetChange: vi.fn(),
+        clipCount: 12,
+        totalSec: 72,
+      });
+      const legend = screen.getByTestId("preset-legend");
+      expect(legend).toBeInTheDocument();
+      expect(legend).toHaveTextContent(/12 clips/);
+      expect(legend).toHaveTextContent(/× ~6s avg/);
+      expect(legend).toHaveTextContent(/45 MB/);
+      expect(legend).toHaveTextContent(/18s encode/);
+      expect(legend).toHaveTextContent(/\(est\. 720p30\)/);
+    });
+
+    it("renders the dash placeholder when clipCount is 0", () => {
+      renderHeader({
+        preset: "ultrafast",
+        onPresetChange: vi.fn(),
+        clipCount: 0,
+        totalSec: 0,
+      });
+      expect(screen.getByTestId("preset-legend")).toHaveTextContent("—");
+    });
+
+    it("updates its predictions when the preset changes", () => {
+      function Wrapper() {
+        const [p, setP] = useState<RenderPreset>("ultrafast");
+        return (
+          <ProjectHeader
+            title="t"
+            durationSec={3600}
+            status="ready"
+            progress={100}
+            activeStage="Idle"
+            demoMode={true}
+            onRerun={vi.fn()}
+            onReset={vi.fn()}
+            preset={p}
+            onPresetChange={setP}
+            clipCount={12}
+            totalSec={72}
+          />
+        );
+      }
+      render(
+        <MemoryRouter>
+          <Wrapper />
+        </MemoryRouter>,
+      );
+      // medium: 1.5 Mbps × 72s = 13.5 MB encode @ 2.5× = 180s = 3.0 min
+      expect(screen.getByTestId("preset-legend")).toHaveTextContent(
+        /13\.5 MB · 3\.0 min encode/,
+      );
+    });
   });
 });

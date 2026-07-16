@@ -18,6 +18,7 @@ import { Progress } from "../ui/progress";
 import { Badge } from "../ui/badge";
 import { formatTimestamp } from "@/lib/utils";
 import type { RenderPreset } from "@/lib/useLocalStorage";
+import { estimateRender, formatEstimate } from "@/lib/ffmpeg/presetEstimate";
 
 export default function ProjectHeader({
   title,
@@ -39,6 +40,8 @@ export default function ProjectHeader({
   preset,
   onPresetChange,
   exportDisabled,
+  clipCount,
+  totalSec,
 }: {
   title: string;
   durationSec: number;
@@ -65,6 +68,14 @@ export default function ProjectHeader({
   onPresetChange?: (preset: RenderPreset) => void;
   /** Disable Export + the preset picker while a render is in flight. */
   exportDisabled?: boolean;
+  /**
+   * Number of clips the renderer will concatenate (top‑12
+   * highlights/shorts/chapters sorted by score). Drives the
+   * per‑clip legend under the preset dropdown.
+   */
+  clipCount?: number;
+  /** Sum of `endSec − startSec` across those clips — the predicted reel length. */
+  totalSec?: number;
 }) {
   const isProc = status === "processing";
   const isReady = status === "ready";
@@ -187,11 +198,26 @@ export default function ProjectHeader({
           <Trash2 className="h-4 w-4 text-destructive" /> Reset
         </Button>
         {preset && onPresetChange && (
-          <PresetPicker
-            value={preset}
-            onChange={onPresetChange}
-            disabled={exportDisabled || !isReady}
-          />
+          <div className="flex flex-col items-end gap-0.5" data-testid="preset-cluster">
+            <PresetPicker
+              value={preset}
+              onChange={onPresetChange}
+              disabled={exportDisabled || !isReady}
+            />
+            <span
+              className="max-w-[260px] truncate text-right font-mono text-[10px] text-muted-foreground"
+              data-testid="preset-legend"
+              title="Predicted output size + encode time for the current clip list and preset. Assumes a 720p30 H.264 source."
+            >
+              {formatEstimate(
+                estimateRender({
+                  preset,
+                  clipCount: clipCount ?? 0,
+                  totalSec: totalSec ?? 0,
+                }),
+              )}
+            </span>
+          </div>
         )}
         <Button
           disabled={!isReady || exportDisabled}
