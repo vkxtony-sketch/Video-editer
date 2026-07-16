@@ -19,6 +19,7 @@
  */
 import type { FFmpeg } from "@ffmpeg/ffmpeg";
 import type { ClipArtifact } from "../pipelineClient";
+import type { RenderPreset } from "../useLocalStorage";
 import { buildConcatArgs } from "./filterGraph";
 
 /** Latest stable single-thread core. We avoid @ffmpeg/core-mt because
@@ -41,6 +42,11 @@ export type RenderReelOptions = {
   /** 0..1 progress ratio. FFmpeg fires these from its decode/encode
    *  phase; we forward them verbatim. */
   onProgress?: (ratio: number) => void;
+  /** libx264 `-preset` token. Default "ultrafast"; higher presets
+   *  (veryfast, medium) produce smaller files at the cost of
+   *  slower browser-side encode. Plumbed straight into the
+   *  buildConcatArgs argv. */
+  preset?: RenderPreset;
   /** Override the core URLs (used in tests to avoid the network). */
   coreURL?: string;
   wasmURL?: string;
@@ -91,7 +97,12 @@ export async function renderHighlightReel(
 
   try {
     await ffmpeg.writeFile(SOURCE_NAME, await fetchFile(opts.videoBlob));
-    const { args, filterGraph } = buildConcatArgs(opts.clips, SOURCE_NAME, OUTPUT_NAME);
+    const { args, filterGraph } = buildConcatArgs(
+      opts.clips,
+      SOURCE_NAME,
+      OUTPUT_NAME,
+      opts.preset ?? "ultrafast",
+    );
     const exit = await ffmpeg.exec(args);
     if (exit !== 0) {
       throw new Error(`renderHighlightReel: ffmpeg exec failed with exit ${exit} (filter=${filterGraph.slice(0, 200)}…)`);

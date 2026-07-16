@@ -66,6 +66,7 @@ export default function Studio() {
   const [startedOnce, setStartedOnce] = useState(false);
   const [audioScanRunning, setAudioScanRunning] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
   const audioScanStartedRef = useRef<string | null>(null);
   const urlHydratedRef = useRef(false);
 
@@ -288,7 +289,12 @@ export default function Studio() {
   // browser budget (server-side render is the path for >2 h VODs).
   const handleExport = useCallback(
     async (_artifact: ExportArtifact) => {
-      const titleSafe =
+      // Double-click guard: while a render is in-flight, ignore the
+      // extra project header click entirely (rather than re-queuing).
+      if (isExporting) return;
+      setIsExporting(true);
+      try {
+        const titleSafe =
         project.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "neon-reel";
 
       function downloadBlob(filename: string, blob: Blob) {
@@ -350,7 +356,7 @@ export default function Studio() {
       }
 
       const tId = toast.loading(
-        `Rendering ${candidates.length}-clip reel (~${project.durationSec.toFixed(0)}s source)… 0%`,
+        `Rendering ${candidates.length}-clip reel (~${project.durationSec.toFixed(0)}s source · preset ${prefs.preset})… 0%`,
       );
       try {
         const sourceRes = await fetch(project.sourceUrl);
@@ -368,6 +374,7 @@ export default function Studio() {
             toast.loading(`Rendering reel… ${Math.round(r * 100)}%`, {
               id: tId,
             }),
+          preset: prefs.preset,
         });
 
         const validation = await parseMp4BoxesFromBlob(mp4);
@@ -386,14 +393,20 @@ export default function Studio() {
         downloadBlob(`${titleSafe}.neon-reel.mp4`, mp4);
         toast.success(
           `Exported ${(mp4.size / 1024 / 1024).toFixed(1)} MB highlight reel`,
-          { id: tId, description: `${candidates.length} clips · mp4` },
+          {
+            id: tId,
+            description: `${candidates.length} clips · mp4 · ${prefs.preset}`,
+          },
         );
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         toast.error("Export failed", { id: tId, description: msg });
       }
-    },
-    [project, clips],
+    } finally {
+      setIsExporting(false);
+    }
+  },
+  [project, clips, prefs.preset, isExporting],
   );
 
   return (
@@ -415,6 +428,9 @@ export default function Studio() {
         llmMode={runRow?.llmMode}
         llmProvider={runRow?.llmProvider ?? null}
         onExport={handleExport}
+        preset={prefs.preset}
+        onPresetChange={(p) => setPrefs({ preset: p })}
+        exportDisabled={isExporting}
       />
 
       <div className="grid grid-cols-1 gap-3 px-3 py-3 lg:grid-cols-12">

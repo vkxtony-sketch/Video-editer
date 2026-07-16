@@ -238,6 +238,40 @@ describe("renderHighlightReel", () => {
     mock.progressListeners[0]({ progress: 7, time: 0 });
     expect(onProgress).toHaveBeenLastCalledWith(1);
   });
+
+  test("defaults to ultrafast when no preset option is supplied", async () => {
+    await renderHighlightReel({
+      videoBlob: new Blob([new Uint8Array(64)]),
+      clips: [fakeClip as unknown as ClipArtifact],
+    });
+    const last = mock.executed[mock.executed.length - 1];
+    expect(last).toContain("-preset");
+    expect(last).toContain("ultrafast");
+  });
+
+  test("threads superfast / veryfast / medium presets into the ffmpeg argv", async () => {
+    for (const preset of ["superfast", "veryfast", "medium"] as const) {
+      await renderHighlightReel({
+        videoBlob: new Blob([new Uint8Array(64)]),
+        clips: [fakeClip as unknown as ClipArtifact],
+        preset,
+      });
+      const last = mock.executed[mock.executed.length - 1];
+      expect(last).toContain("-preset");
+      expect(last).toContain(preset);
+    }
+  });
+
+  test("rejects unknown preset values at the buildConcatArgs boundary", async () => {
+    await expect(
+      renderHighlightReel({
+        videoBlob: new Blob([new Uint8Array(64)]),
+        clips: [fakeClip as unknown as ClipArtifact],
+        // Cast through unknown to bypass TypeScript's literal-type check.
+        preset: "ultra-mega-fast" as unknown as "ultrafast",
+      }),
+    ).rejects.toThrow(/invalid preset/i);
+  });
 });
 
 describe("isWithinBrowserRenderBudget", () => {

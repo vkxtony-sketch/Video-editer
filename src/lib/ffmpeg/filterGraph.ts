@@ -15,6 +15,7 @@
  * never gets touched.
  */
 import type { ClipArtifact } from "../pipelineClient";
+import type { RenderPreset } from "../useLocalStorage";
 
 export type ConcatArgs = {
   /** argv to pass to ffmpeg.exec([...]) */
@@ -34,12 +35,24 @@ export function buildConcatArgs(
   clips: ClipArtifact[],
   sourceName = "input.mp4",
   outputName = "reel.mp4",
+  preset: RenderPreset = "ultrafast",
 ): ConcatArgs {
   if (clips.length === 0) {
     throw new Error("buildConcatArgs: at least one clip is required");
   }
   if (clips.length > 999) {
     throw new Error("buildConcatArgs: too many clips (max 999)");
+  }
+  const VALID_PRESETS: RenderPreset[] = [
+    "ultrafast",
+    "superfast",
+    "veryfast",
+    "medium",
+  ];
+  if (!VALID_PRESETS.includes(preset)) {
+    throw new Error(
+      `buildConcatArgs: invalid preset "${preset}" (expected ultrafast | superfast | veryfast | medium)`,
+    );
   }
 
   // One per-clip trim/setpts/atrim/asetpts pair, then concat them.
@@ -70,7 +83,7 @@ export function buildConcatArgs(
     "-c:v",
     "libx264",
     "-preset",
-    "ultrafast",
+    preset,
     "-c:a",
     "aac",
     "-ar",

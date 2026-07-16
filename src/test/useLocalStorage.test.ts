@@ -27,7 +27,7 @@ describe("readPrefs / writePrefs", () => {
   });
 
   it("round-trips a valid prefs object", () => {
-    const p: StudioPrefs = { tab: "thumbs", highlightId: "c_1", updatedAt: 1234 };
+    const p: StudioPrefs = { tab: "thumbs", highlightId: "c_1", updatedAt: 1234, preset: "ultrafast" };
     writePrefs(PROJECT_ID, p);
     expect(readPrefs(PROJECT_ID)).toEqual(p);
   });
@@ -67,7 +67,7 @@ describe("readPrefs / writePrefs", () => {
     window.localStorage.setItem = thrower;
     try {
       expect(() =>
-        writePrefs(PROJECT_ID, { tab: "captions", highlightId: "c_x", updatedAt: 1 }),
+        writePrefs(PROJECT_ID, { tab: "captions", highlightId: "c_x", updatedAt: 1, preset: "ultrafast" }),
       ).not.toThrow();
     } finally {
       window.localStorage.setItem = original;
@@ -75,9 +75,9 @@ describe("readPrefs / writePrefs", () => {
   });
 
   it("isolates prefs per projectId", () => {
-    writePrefs("p_a", { tab: "thumbs", highlightId: null, updatedAt: 1 });
-    writePrefs("p_b", { tab: "captions", highlightId: "x", updatedAt: 2 });
-    expect(readPrefs("p_a")).toEqual({ tab: "thumbs", highlightId: null, updatedAt: 1 });
-    expect(readPrefs("p_b")).toEqual({ tab: "captions", highlightId: "x", updatedAt: 2 });
+    writePrefs("p_a", { tab: "thumbs", highlightId: null, updatedAt: 1, preset: "ultrafast" });
+    writePrefs("p_b", { tab: "captions", highlightId: "x", updatedAt: 2, preset: "ultrafast" });
+    expect(readPrefs("p_a")).toEqual({ tab: "thumbs", highlightId: null, updatedAt: 1, preset: "ultrafast" });
+    expect(readPrefs("p_b")).toEqual({ tab: "captions", highlightId: "x", updatedAt: 2, preset: "ultrafast" });
   });
 });

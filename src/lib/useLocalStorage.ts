@@ -12,15 +12,33 @@ export function storageKey(projectId: string): string {
 
 export type StudioTab = "titles" | "thumbs" | "captions";
 
+/**
+ * libx264 `-preset` choice surfaced in the Studio header via the
+ * dropdown next to Export. Higher presets (medium) → smaller files,
+ * slower browser-side encodes. Defaults to "ultrafast" because that
+ * finishes a 30 s highlight reel of a <2 h source in roughly half the
+ * time of "medium" on a typical laptop browser.
+ */
+export type RenderPreset = "ultrafast" | "superfast" | "veryfast" | "medium";
+
+const RENDER_PRESETS: RenderPreset[] = [
+  "ultrafast",
+  "superfast",
+  "veryfast",
+  "medium",
+];
+
 export type StudioPrefs = {
   tab: StudioTab;
   highlightId: string | null;
+  preset: RenderPreset;
   updatedAt: number;
 };
 
 export const DEFAULT_PREFS: StudioPrefs = {
   tab: "titles",
   highlightId: null,
+  preset: "ultrafast",
   updatedAt: 0,
 };
 
@@ -37,13 +55,16 @@ export function readPrefs(projectId: string): StudioPrefs {
         parsed.tab === "thumbs" ||
         parsed.tab === "captions")
     ) {
-      return {
-        tab: parsed.tab,
-        highlightId:
-          typeof parsed.highlightId === "string" ? parsed.highlightId : null,
-        updatedAt:
-          typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
-      };
+    return {
+      tab: parsed.tab,
+      highlightId:
+        typeof parsed.highlightId === "string" ? parsed.highlightId : null,
+      preset: RENDER_PRESETS.includes(parsed.preset)
+        ? (parsed.preset as RenderPreset)
+        : "ultrafast",
+      updatedAt:
+        typeof parsed.updatedAt === "number" ? parsed.updatedAt : 0,
+    };
     }
   } catch {
     /* corrupt JSON → fall back to default */

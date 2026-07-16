@@ -1,10 +1,14 @@
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
   ArrowLeft,
+  Check,
+  ChevronDown,
   Clock3,
   Cpu,
   Download,
+  Gauge,
   RotateCcw,
   Sparkles,
   Trash2,
@@ -13,6 +17,7 @@ import { Button } from "../ui/button";
 import { Progress } from "../ui/progress";
 import { Badge } from "../ui/badge";
 import { formatTimestamp } from "@/lib/utils";
+import type { RenderPreset } from "@/lib/useLocalStorage";
 
 export default function ProjectHeader({
   title,
@@ -31,6 +36,9 @@ export default function ProjectHeader({
   llmMode,
   llmProvider,
   onExport,
+  preset,
+  onPresetChange,
+  exportDisabled,
 }: {
   title: string;
   durationSec: number;
@@ -51,6 +59,12 @@ export default function ProjectHeader({
   llmProvider?: string | null;
   /** Real Export hook — receives the project meta. Defaults to a JSON EDL download. */
   onExport?: (edl: ExportArtifact) => void;
+  /** Currently-selected libx264 preset — drives the dropdown beside Export. */
+  preset?: RenderPreset;
+  /** Called when the user picks a different preset; persisted downstream. */
+  onPresetChange?: (preset: RenderPreset) => void;
+  /** Disable Export + the preset picker while a render is in flight. */
+  exportDisabled?: boolean;
 }) {
   const isProc = status === "processing";
   const isReady = status === "ready";
@@ -172,10 +186,18 @@ export default function ProjectHeader({
         <Button variant="ghost" onClick={onReset} className="gap-1.5">
           <Trash2 className="h-4 w-4 text-destructive" /> Reset
         </Button>
+        {preset && onPresetChange && (
+          <PresetPicker
+            value={preset}
+            onChange={onPresetChange}
+            disabled={exportDisabled || !isReady}
+          />
+        )}
         <Button
-          disabled={!isReady}
+          disabled={!isReady || exportDisabled}
           onClick={handleExport}
           className="bg-primary text-primary-foreground hover:bg-primary/90"
+          data-testid="export-button"
         >
           <Download className="h-4 w-4" /> Export
         </Button>
@@ -208,6 +230,119 @@ function defaultExportDownload(artifact: ExportArtifact) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/**
+ * Inline preset dropdown used next to the Export button. We build
+ * this ourselves (no extra dependency) because:
+ *   - shadcn/ui has no Select in this project yet — we'd be the
+ *     first user, and adding `@radix-ui/react-select` for one tiny
+ *     dropdown feels disproportionate.
+ *   - The popover only ever renders 4 fixed options, so the
+ *     accessibility surface (aria-haspopup / aria-expanded /
+ *     role=listbox / role=option) is small enough that a hand-rolled
+ *     version reads cleanly.
+ */
+function PresetPicker({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: RenderPreset;
+  onChange: (v: RenderPreset) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement | null>(null);
+
+  // Click-outside dismissal — keep the popover focused only while it's open.
+  useEffect(() => {
+    if (!open) return;
+    function onDocDown(e: MouseEvent) {
+      if (!wrapRef.current) return;
+      if (!wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocDown);
+    return () => document.removeEventListener("mousedown", onDocDown);
+  }, [open]);
+
+  // Per-option labels + brief size/time hints. Sizes are rough H.264
+  // averages for 720p30 content with -preset <name> — real-world
+  // varies ±30% with scene complexity. Tune the numbers if you ship
+  // a different resolution profile (1080p averages ~2.4× these).
+  const OPTIONS: ReadonlyArray<{
+    value: RenderPreset;
+    label: string;
+    hint: string;
+  }> = [
+    { value: "ultrafast", label: "Fastest", hint: "~5 MB/min" },
+    { value: "superfast", label: "Fast", hint: "~3 MB/min · 2× encode" },
+    { value: "veryfast", label: "Balanced", hint: "~2 MB/min · 4× encode" },
+    { value: "medium", label: "Smallest file", hint: "~1.5 MB/min · 10× encode" },
+  ];
+  const current = OPTIONS.find((o) => o.value === value) ?? OPTIONS[0];
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        disabled={disabled}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        data-testid="preset-trigger"
+        className="inline-flex items-center gap-1.5 rounded-md border border-border/70 bg-secondary/60 px-2.5 py-1.5 text-xs font-medium text-foreground transition-colors hover:bg-secondary disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <Gauge className="h-3.5 w-3.5 text-muted-foreground" />
+        <span>
+          Preset · <span className="text-primary">{current.label}</span>
+        </span>
+        <ChevronDown className="h-3 w-3 text-muted-foreground" />
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          className="absolute right-0 z-50 mt-1.5 w-60 overflow-hidden rounded-lg border border-border/70 bg-popover text-popover-foreground shadow-xl"
+        >
+          {OPTIONS.map((opt) => {
+            const selected = opt.value === value;
+            return (
+              <button
+                type="button"
+                key={opt.value}
+                role="option"
+                aria-selected={selected}
+                data-testid={`preset-option-${opt.value}`}
+                onClick={() => {
+                  onChange(opt.value);
+                  setOpen(false);
+                }}
+                className={
+                  "flex w-full flex-col items-start gap-0.5 px-3 py-2 text-left text-xs transition-colors hover:bg-accent/30 " +
+                  (selected
+                    ? "bg-primary/10 text-primary"
+                    : "")
+                }
+              >
+                <span className="flex w-full items-center justify-between">
+                  <span className="font-medium">{opt.label}</span>
+                  <Check
+                    className={
+                      "h-3 w-3 transition-opacity " +
+                      (selected ? "opacity-100" : "opacity-0")
+                    }
+                  />
+                </span>
+                <span className="text-[10px] text-muted-foreground">
+                  {opt.hint}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 /**
