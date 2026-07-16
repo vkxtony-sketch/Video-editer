@@ -228,3 +228,25 @@ vi.mock("convex/react", () => {
 if (typeof window !== "undefined" && !window.localStorage.getItem("neon:session")) {
   window.localStorage.setItem("neon:session", "u_test");
 }
+
+// jsdom's `Blob` doesn't expose `.arrayBuffer()`, AND routing through
+// `new Response(blob).arrayBuffer()` blows up because jsdom's Response
+// internally calls `body.stream()` on the Blob which also isn't
+// implemented. Use the FileReader API — jsdom implements that
+// correctly end-to-end. Modern production browsers + Node 22 already
+// implement `Blob.prototype.arrayBuffer` natively, so this polyfill is
+// only active in the Vitest/jsdom test environment.
+if (typeof Blob !== "undefined" && typeof Blob.prototype.arrayBuffer !== "function") {
+  Object.defineProperty(Blob.prototype, "arrayBuffer", {
+    configurable: true,
+    writable: true,
+    value: function arrayBuffer(this: Blob): Promise<ArrayBuffer> {
+      return new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onerror = () => reject(reader.error ?? new Error("FileReader failed"));
+        reader.onload = () => resolve(reader.result as ArrayBuffer);
+        reader.readAsArrayBuffer(this);
+      });
+    },
+  });
+}

@@ -4,10 +4,17 @@ import { useAction, useMutation, useQuery } from "convex/react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import { Id } from "../../convex/_generated/dataModel";
-import ProjectHeader from "../components/studio/ProjectHeader";
+import ProjectHeader, {
+  type ExportArtifact,
+} from "../components/studio/ProjectHeader";
 import VideoPreview, {
   type VideoControlRef,
 } from "../components/studio/VideoPreview";
+import {
+  renderHighlightReel,
+  parseMp4BoxesFromBlob,
+  BROWSER_RENDER_MAX_SEC,
+} from "@/lib/ffmpeg";
 import HighlightsList, {
   HighlightItem,
 } from "../components/studio/HighlightsList";
@@ -275,6 +282,120 @@ export default function Studio() {
     });
   }
 
+  // Real MP4 export via the browser-side FFmpeg.wasm renderer.
+  // Falls back to the JSON EDL download when there is no source video,
+  // no clip list yet, or the source is longer than the supported 2-hour
+  // browser budget (server-side render is the path for >2 h VODs).
+  const handleExport = useCallback(
+    async (_artifact: ExportArtifact) => {
+      const titleSafe =
+        project.title.replace(/[^a-z0-9-_ ]/gi, "").trim() || "neon-reel";
+
+      function downloadBlob(filename: string, blob: Blob) {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      }
+
+      function edlFallback() {
+        downloadBlob(
+          `${titleSafe}.neon-edl.json`,
+          new Blob([JSON.stringify(_artifact, null, 2)], {
+            type: "application/json",
+          }),
+        );
+      }
+
+      if (!project.sourceUrl) {
+        toast.info("No source video to render — exporting JSON EDL", {
+          description:
+            "Upload or paste a video URL, then re-run the pipeline.",
+        });
+        edlFallback();
+        return;
+      }
+
+      if (project.durationSec > BROWSER_RENDER_MAX_SEC) {
+        toast.warning("Source over 2 h — browser export skipped", {
+          description:
+            "Exported JSON EDL instead. Server-side render unlocks >2 h VODs.",
+        });
+        edlFallback();
+        return;
+      }
+
+      const candidates = (clips ?? [])
+        .filter(
+          (c) =>
+            c.kind === "highlight" ||
+            c.kind === "short" ||
+            c.kind === "chapter",
+        )
+        .slice()
+        .sort((a, b) => (b.score ?? 0) - (a.score ?? 0))
+        .slice(0, 12);
+
+      if (candidates.length === 0) {
+        toast.info("No clips to render yet — exporting JSON EDL", {
+          description:
+            "Click Re-run to generate highlights, shorts, and chapters first.",
+        });
+        edlFallback();
+        return;
+      }
+
+      const tId = toast.loading(
+        `Rendering ${candidates.length}-clip reel (~${project.durationSec.toFixed(0)}s source)… 0%`,
+      );
+      try {
+        const sourceRes = await fetch(project.sourceUrl);
+        if (!sourceRes.ok) {
+          throw new Error(
+            `Source fetch failed: ${sourceRes.status} ${sourceRes.statusText}`,
+          );
+        }
+        const sourceBlob = await sourceRes.blob();
+
+        const mp4 = await renderHighlightReel({
+          videoBlob: sourceBlob,
+          clips: candidates,
+          onProgress: (r) =>
+            toast.loading(`Rendering reel… ${Math.round(r * 100)}%`, {
+              id: tId,
+            }),
+        });
+
+        const validation = await parseMp4BoxesFromBlob(mp4);
+        if (!validation.ok) {
+          const missing = [
+            validation.ftypAt < 0 ? "'ftyp'" : null,
+            validation.moovAt < 0 ? "'moov'" : null,
+          ]
+            .filter(Boolean)
+            .join(" and ");
+          throw new Error(
+            `Rendered file is not a valid MP4 — missing ${missing} box(es)`,
+          );
+        }
+
+        downloadBlob(`${titleSafe}.neon-reel.mp4`, mp4);
+        toast.success(
+          `Exported ${(mp4.size / 1024 / 1024).toFixed(1)} MB highlight reel`,
+          { id: tId, description: `${candidates.length} clips · mp4` },
+        );
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        toast.error("Export failed", { id: tId, description: msg });
+      }
+    },
+    [project, clips],
+  );
+
   return (
     <div className="mx-auto max-w-[1600px]">
       <ProjectHeader
@@ -293,6 +414,7 @@ export default function Studio() {
         audioScanDone={project.audioScanDone ?? false}
         llmMode={runRow?.llmMode}
         llmProvider={runRow?.llmProvider ?? null}
+        onExport={handleExport}
       />
 
       <div className="grid grid-cols-1 gap-3 px-3 py-3 lg:grid-cols-12">
