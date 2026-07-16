@@ -1,2 +1,31 @@
 
 .env.local
+
+# Build output
+dist/
+dist-ssr/
+build/
+out/
+
+# Dependencies
+node_modules/
+node_modules/.vite/
+node_modules/.cache/
+
+# Bun / package manager
+bun.lockb
+.npm/
+
+# Logs / tooling caches
+*.log
+.vite/
+.eslintcache
+.turbo
+.parcel-cache
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+Thumbs.db
