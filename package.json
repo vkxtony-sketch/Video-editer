@@ -13,7 +13,10 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "bash scripts/run-e2e.sh",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "push": "git -c core.sshCommand=\"ssh -i /home/daytona/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes\" push origin main",
+    "sync": "bash scripts/dev-sync.sh",
+    "sync:amend": "git -c core.sshCommand=\"ssh -i /home/daytona/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes\" push --force-with-lease origin main"
   },
   "dependencies": {
     "@ffmpeg/ffmpeg": "^0.12.15",
