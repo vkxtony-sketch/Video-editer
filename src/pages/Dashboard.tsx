@@ -34,6 +34,11 @@ import {
   analyzeAndIngest,
   type AnalysisProgress,
 } from "../lib/pipelineClient";
+import {
+  fetchUrlAsVideoFile,
+  validateVideoUrl,
+} from "../lib/urlFetch";
+import { generateSampleClip } from "../lib/sampleClip";
 
 const personas = [
   { key: "podcast", label: "Podcast · Multi-cam", dur: 90 * 60 },
@@ -50,6 +55,18 @@ const STAGE_LABEL: Record<AnalysisProgress["stage"], string> = {
   "video-sample": "Sampling frames + scene detection",
   "build-artifacts": "Scoring clips + drafting titles",
   ingest: "Saving results",
+};
+
+type IngestFileOpts = {
+  sourceKind?: "upload" | "url" | "sample";
+  /** Override what's stored in the project's `sourceUrl` (e.g. the
+   * original https URL for `source === "url"`). If omitted, we store
+   * the blob: URL the analyzer actually reads. */
+  sourceUrlOverride?: string;
+  sourceLabelOverride?: string;
+  durationSecOverride?: number;
+  personaOverride?: string;
+  titleOverride?: string;
 };
 
 export default function Dashboard() {
@@ -91,7 +108,7 @@ export default function Dashboard() {
     await ingestFile(file);
   }
 
-  async function ingestFile(file: File) {
+  async function ingestFile(file: File, opts: IngestFileOpts = {}) {
     if (!ownerId) return;
     if (!/^video\//.test(file.type) && !/\.(mp4|mov|webm|m4v|mkv|avi)$/i.test(file.name)) {
       alert("Please drop a video file (mp4, mov, webm, m4v, mkv).");
@@ -104,22 +121,38 @@ export default function Dashboard() {
       return;
     }
 
+    const sourceKind = opts.sourceKind ?? "upload";
     setAnalyzing({ stage: "audio-decode", frac: 0 });
     const url = URL.createObjectURL(file);
     const probedDuration = await probeDuration(url).catch(() => 0);
     const minutes = Math.max(1, Math.round(file.size / (1024 * 1024)));
-    const title = file.name.replace(/\.[^.]+$/, "") || "Untitled upload";
-    const durationSec = Math.max(60, Math.floor(probedDuration || minutes * 60));
+    const title =
+      (opts.titleOverride ?? file.name.replace(/\.[^.]+$/, "")) ||
+      "Untitled upload";
+    const durationSec = Math.max(
+      60,
+      Math.floor(
+        (opts.durationSecOverride ?? probedDuration) || (minutes * 60),
+      ),
+    );
+    const minutesForLabel = Math.max(1, Math.round(file.size / (1024 * 1024)));
+    const sourceLabel =
+      opts.sourceLabelOverride ??
+      (sourceKind === "url"
+        ? `URL ingest · ${file.name} · ${minutesForLabel}MB`
+        : sourceKind === "sample"
+          ? `Sample tutorial clip · ${file.name}`
+          : `${file.name} · ${minutesForLabel}MB`);
 
     const { projectId } = await create({
       ownerId,
       title,
-      source: "upload",
-      sourceUrl: url,
-      sourceLabel: `${file.name} · ${minutes}MB`,
+      source: sourceKind,
+      sourceUrl: opts.sourceUrlOverride ?? url,
+      sourceLabel,
       durationSec,
       sizeMb: minutes,
-      persona: "user upload",
+      persona: opts.personaOverride ?? (sourceKind === "sample" ? "tutorial sample" : "user upload"),
     });
 
     try {
@@ -230,6 +263,44 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            data-testid="try-with-sample"
+            disabled={!ownerId}
+            onClick={async () => {
+              try {
+                setAnalyzing({ stage: "audio-decode", frac: 0 });
+                const file = await generateSampleClip({
+                  onProgress: (p) => {
+                    if (p.phase === "render") {
+                      setAnalyzing({
+                        stage: "audio-decode",
+                        frac:
+                          p.totalSec > 0 ? p.elapsedSec / p.totalSec : 0,
+                      });
+                    }
+                  },
+                });
+                await ingestFile(file, {
+                  sourceKind: "sample",
+                  sourceUrlOverride: "sample://tutorial-clip",
+                  sourceLabelOverride: `Sample tutorial clip · ${file.name}`,
+                  durationSecOverride: 30,
+                  personaOverride: "tutorial sample",
+                  titleOverride: `Sample tutorial clip · ${new Date().toLocaleString()}`,
+                });
+              } catch (e) {
+                alert(
+                  `Sample clip generation failed: ${e instanceof Error ? e.message : String(e)}`,
+                );
+              } finally {
+                setAnalyzing(null);
+              }
+            }}
+            className="border-accent/40 text-accent hover:bg-accent/10"
+          >
+            <Sparkles className="h-4 w-4" /> Try with sample
+          </Button>
           <NewProjectDialog open={open} setOpen={setOpen} onFile={ingestFile} />
         </div>
       </div>
@@ -371,6 +442,16 @@ function ProjectCard({
                   Real upload
                 </span>
               )}
+              {source === "url" && (
+                <span className="inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-accent">
+                  Real URL
+                </span>
+              )}
+              {source === "sample" && (
+                <span className="inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-accent">
+                  Real sample
+                </span>
+              )}
             </div>
           </div>
           <Badge className={statusMeta[status].c}>{statusMeta[status].l}</Badge>
@@ -455,57 +536,88 @@ function GridSkeleton() {
       ))}
     </div>
   );
-}
+}  function NewProjectDialog({
+    open,
+    setOpen,
+    onFile,
+  }: {
+    open: boolean;
+    setOpen: (v: boolean) => void;
+    onFile: (f: File, opts?: IngestFileOpts) => void;
+  }) {
+    const ownerId = useSession();
+    const create = useMutation(api.projects.create);
+    const navigate = useNavigate();
+    const fileInputRef = useRef<HTMLInputElement | null>(null);
+    const [personaKey, setPersonaKey] = useState(personas[0].key);
+    const [title, setTitle] = useState("");
+    const [sourceKind, setSourceKind] = useState<"url" | "upload" | "demo">(
+      "demo",
+    );
+    const [sourceUrl, setSourceUrl] = useState("");
+    const [busy, setBusy] = useState(false);
 
-function NewProjectDialog({
-  open,
-  setOpen,
-  onFile,
-}: {
-  open: boolean;
-  setOpen: (v: boolean) => void;
-  onFile: (f: File) => void;
-}) {
-  const ownerId = useSession();
-  const create = useMutation(api.projects.create);
-  const navigate = useNavigate();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [personaKey, setPersonaKey] = useState(personas[0].key);
-  const [title, setTitle] = useState("");
-  const [sourceKind, setSourceKind] = useState<"url" | "upload" | "demo">(
-    "demo",
-  );
-  const [sourceUrl, setSourceUrl] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function startRun() {
-    if (!ownerId) return;
-    setBusy(true);
-    try {
-      const persona = personas.find((p) => p.key === personaKey);
-      const finalTitle =
-        title.trim() ||
-        `${persona?.label || "Untitled"} · ${new Date().toLocaleString()}`;
-      const { projectId } = await create({
-        ownerId,
-        title: finalTitle,
-        source: sourceKind,
-        sourceUrl: sourceKind === "url" ? sourceUrl : undefined,
-        sourceLabel:
-          sourceKind === "demo"
-            ? "Demo source · no file"
-            : sourceKind === "url"
-              ? sourceUrl
+    async function startRun() {
+      if (!ownerId) return;
+      if (sourceKind === "url") {
+        return startUrlRun();
+      }
+      // Demo path: server-side mock runs the seeded 7-stage pipeline.
+      setBusy(true);
+      try {
+        const persona = personas.find((p) => p.key === personaKey);
+        const finalTitle =
+          title.trim() ||
+          `${persona?.label || "Untitled"} · ${new Date().toLocaleString()}`;
+        // After the early `return startUrlRun()` above, `sourceKind` is
+        // narrowed to "upload" | "demo" — so these branches only handle the
+        // demo + upload cases; url ingest has already produced a File.
+        const { projectId } = await create({
+          ownerId,
+          title: finalTitle,
+          source: sourceKind,
+          sourceUrl: undefined,
+          sourceLabel:
+            sourceKind === "demo"
+              ? "Demo source · no file"
               : "Uploaded",
-        durationSec: persona?.dur || 60 * 60,
-        persona: persona?.label,
-      });
-      setOpen(false);
-      navigate(`/studio/${projectId}`);
-    } finally {
-      setBusy(false);
+          durationSec: persona?.dur || 60 * 60,
+          persona: persona?.label,
+        });
+        setOpen(false);
+        navigate(`/studio/${projectId}`);
+      } finally {
+        setBusy(false);
+      }
     }
-  }
+
+    async function startUrlRun() {
+      const v = validateVideoUrl(sourceUrl);
+      if (!v.ok) {
+        alert(v.error);
+        return;
+      }
+      setBusy(true);
+      try {
+        const file = await fetchUrlAsVideoFile(sourceUrl);
+        const label = `URL ingest · ${v.filename} · ${(file.size / 1024 / 1024).toFixed(1)}MB`;
+        setOpen(false);
+        onFile(file, {
+          sourceKind: "url",
+          sourceUrlOverride: sourceUrl.trim(),
+          sourceLabelOverride: label,
+          personaOverride: "url ingest",
+          titleOverride:
+            title.trim() || `URL ingest · ${v.filename}`,
+        });
+      } catch (e) {
+        alert(
+          `URL ingest failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      } finally {
+        setBusy(false);
+      }
+    }
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -558,22 +670,46 @@ function NewProjectDialog({
             <div className="grid grid-cols-3 gap-2">
               {(
                 [
-                  { k: "demo", l: "Demo source", i: Sparkles },
-                  { k: "url", l: "Video URL", i: Upload },
-                  { k: "upload", l: "Upload", i: Video },
+                  {
+                    k: "demo",
+                    l: "Demo source",
+                    i: Sparkles,
+                    caption: "Mock UI only · no file ingested",
+                    testId: "source-demo",
+                  },
+                  {
+                    k: "url",
+                    l: "Video URL",
+                    i: Upload,
+                    caption: "Fetch public MP4 · real analysis",
+                    testId: "source-url",
+                  },
+                  {
+                    k: "upload",
+                    l: "Upload",
+                    i: Video,
+                    caption: "Run Web Audio + frame-hash locally",
+                    testId: "source-upload",
+                  },
                 ] as const
               ).map((opt) => (
                 <button
                   key={opt.k}
                   onClick={() => setSourceKind(opt.k)}
-                  className={`flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs transition ${
+                  data-testid={opt.testId}
+                  className={`flex h-full flex-col items-stretch gap-1 rounded-lg border px-3 py-2 text-xs transition ${
                     sourceKind === opt.k
                       ? "border-accent/60 bg-accent/10 text-foreground"
                       : "border-border/70 bg-secondary/40 text-muted-foreground hover:border-border"
                   }`}
                 >
-                  <opt.i className="h-3.5 w-3.5" />
-                  {opt.l}
+                  <span className="flex items-center justify-center gap-1.5">
+                    <opt.i className="h-3.5 w-3.5" />
+                    {opt.l}
+                  </span>
+                  <span className="text-[10px] font-normal leading-tight text-muted-foreground/80">
+                    {opt.caption}
+                  </span>
                 </button>
               ))}
             </div>
@@ -624,8 +760,11 @@ function NewProjectDialog({
 
           <div className="flex items-center justify-between gap-3 border-t border-border/60 pt-3">
             <p className="text-xs text-muted-foreground">
-              Demo and URL sources use the bundled mock pipeline. Uploaded
-              files run real analysis in your browser.
+              <strong className="text-foreground">Demo</strong> uses the
+              bundled mock (placeholder artifacts).
+              <strong className="text-foreground"> URL</strong> and
+              <strong className="text-foreground"> Upload</strong> both run
+              REAL Web Audio + frame-hash analysis in your browser.
             </p>
             <div className="flex gap-2">
               <Button variant="ghost" onClick={() => setOpen(false)}>

@@ -342,10 +342,15 @@ export const runPipeline = action({
   handler: async (ctx, args) => {
     const project = await ctx.runQuery(api.projects.get, { id: args.projectId });
     if (!project) throw new Error("project not found");
-    // Real uploads bypass this entirely — artifacts come from the client's
-    // Web Audio + frame-hash pipeline (see /src/lib/pipelineClient.ts and
-    // /convex/analyze.ts). Only demo / url / sample sources fall through.
-    if (project.source === "upload") {
+    // Real client paths (upload/url/sample) bypass this entirely —
+    // artifacts come from the browser's Web Audio + frame-hash pipeline
+    // (see /src/lib/pipelineClient.ts and /convex/analyze.ts). Only
+    // `source === "demo"` falls through to the seeded 7-stage mock.
+    if (
+      project.source === "upload" ||
+      project.source === "url" ||
+      project.source === "sample"
+    ) {
       return;
     }
 
@@ -441,15 +446,22 @@ export const runPipeline = action({
         peakRms: 0.7,
         meanRms: 0.35,
       })
-      .catch((e) => {
-        console.warn("[pipeline] LLM narrative action threw, using pool:", e);
-        return {
-          ok: true as const,
-          mode: "deterministic" as const,
-          provider: null as const,
-          payload: null as null,
-        };
-      });
+      .catch(
+        (e): {
+          ok: true;
+          mode: "deterministic";
+          provider: null;
+          payload: null;
+        } => {
+          console.warn("[pipeline] LLM narrative action threw, using pool:", e);
+          return {
+            ok: true,
+            mode: "deterministic",
+            provider: null,
+            payload: null,
+          };
+        },
+      );
 
     // ---- Captions: locally-generated, no LLM dependency. ----
     const captions = pickCaptions(project.durationSec, seed).map((c) => ({
