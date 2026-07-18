@@ -105,4 +105,30 @@ export default defineSchema({
     distance: v.number(),
     createdAt: v.number(),
   }).index("by_project", ["projectId"]),
+
+  // Browser-side errors caught by `src/lib/clientErrorTrap.ts`. Captures:
+  //   - window.onerror
+  //   - unhandledrejection
+  //   - React render-tree failures (via ClientErrorBoundary + componentDidCatch)
+  //   - console.error intercepts
+  // Server caps every string field so a malicious caller can't blow the row size.
+  clientErrors: defineTable({
+    kind: v.union(
+      v.literal("error"),
+      v.literal("unhandledrejection"),
+      v.literal("boundary"),
+      v.literal("console.error"),
+    ),
+    route: v.string(),
+    message: v.string(),
+    stack: v.optional(v.string()),
+    filename: v.optional(v.string()),
+    lineno: v.optional(v.number()),
+    colno: v.optional(v.number()),
+    extra: v.optional(v.string()),
+    ownerId: v.optional(v.string()),
+    createdAt: v.number(),
+  })
+    .index("by_createdAt", ["createdAt"])
+    .index("by_owner", ["ownerId", "createdAt"]),
 });

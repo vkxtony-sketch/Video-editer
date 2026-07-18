@@ -5,6 +5,7 @@ import { api } from "../../convex/_generated/api";
 import { motion } from "framer-motion";
 import { Id } from "../../convex/_generated/dataModel";
 import {
+  Bug,
   Clapperboard,
   Clock3,
   Film,
@@ -87,6 +88,15 @@ export default function Dashboard() {
     stage: AnalysisProgress["stage"];
     frac: number;
   } | null>(null);
+  // Live count of recent client-side errors (window.onerror,
+  // unhandledrejection, console.error intercepts, React render errors).
+  // Surfaced as a small Bug badge in the header so the user knows when
+  // their session has captured anything to inspect.
+  const recentErrors = useQuery(
+    api.clientErrors.recent,
+    ownerId ? { limit: 20, ownerId } : "skip",
+  );
+  const [errorsOpen, setErrorsOpen] = useState(false);
 
   async function handleDelete(id: Id<"projects">) {
     await remove({ id });
@@ -263,6 +273,18 @@ export default function Dashboard() {
           </p>
         </div>
         <div className="flex items-center gap-2">
+          {recentErrors && recentErrors.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              data-testid="errors-badge"
+              onClick={() => setErrorsOpen(true)}
+              className="border border-destructive/40 text-destructive hover:bg-destructive/10"
+            >
+              <Bug className="h-4 w-4" />
+              {recentErrors.length} error{recentErrors.length === 1 ? "" : "s"}
+            </Button>
+          )}
           <Button
             variant="outline"
             data-testid="try-with-sample"
@@ -337,6 +359,45 @@ export default function Dashboard() {
           </div>
         )}
       </div>
+
+      <Dialog open={errorsOpen} onOpenChange={setErrorsOpen}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>
+              Recent client errors ({recentErrors?.length ?? 0})
+            </DialogTitle>
+          </DialogHeader>
+          <div className="max-h-96 overflow-y-auto rounded border border-border/60 bg-background/40">
+            {(recentErrors ?? []).length === 0 ? (
+              <p className="p-3 text-xs text-muted-foreground">
+                No errors captured in this session.
+              </p>
+            ) : (
+              (recentErrors ?? []).map((e) => (
+                <div
+                  key={e._id}
+                  className="border-b border-border/40 p-3 last:border-0"
+                  data-testid="error-row"
+                >
+                  <div className="flex items-center justify-between text-[10px] uppercase tracking-[0.18em] text-muted-foreground">
+                    <span data-testid="error-kind">{e.kind}</span>
+                    <span>{new Date(e.createdAt).toLocaleTimeString()}</span>
+                  </div>
+                  <p className="mt-1 font-mono text-xs text-foreground">
+                    {e.message}
+                  </p>
+                  {e.stack && (
+                    <pre className="mt-2 max-h-24 overflow-hidden whitespace-pre-wrap text-[10px] text-muted-foreground/70">
+                      {e.stack.slice(0, 400)}
+                      {e.stack.length > 400 ? "\u2026" : ""}
+                    </pre>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
