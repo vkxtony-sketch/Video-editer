@@ -151,6 +151,20 @@ export async function generateSampleClip(
     );
   }
 
+  // Check MIME support BEFORE spinning up canvas + AudioContext — that way
+  // mocked tests that return false from isTypeSupported hit the friendly
+  // "no supported MIME type" error instead of leaking a canvas error first.
+  const mimeCandidates = [
+    "video/webm;codecs=vp9,opus",
+    "video/webm;codecs=vp8,opus",
+    "video/webm",
+    "video/mp4",
+  ];
+  const mime = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m));
+  if (!mime) {
+    throw new Error("No supported MediaRecorder MIME type in this browser");
+  }
+
   const prep = prepareSample(opts);
   const canvas = document.createElement("canvas");
   canvas.width = 640;
@@ -199,17 +213,6 @@ export async function generateSampleClip(
 
   const audioTrack = dest.stream.getAudioTracks()[0];
   if (audioTrack) videoStream.addTrack(audioTrack);
-
-  const mimeCandidates = [
-    "video/webm;codecs=vp9,opus",
-    "video/webm;codecs=vp8,opus",
-    "video/webm",
-    "video/mp4",
-  ];
-  const mime = mimeCandidates.find((m) => MediaRecorder.isTypeSupported(m));
-  if (!mime) {
-    throw new Error("No supported MediaRecorder MIME type in this browser");
-  }
 
   const recorder = new MediaRecorder(videoStream, { mimeType: mime });
   const chunks: Blob[] = [];

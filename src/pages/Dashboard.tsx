@@ -688,7 +688,7 @@ function GridSkeleton() {
                     k: "upload",
                     l: "Upload",
                     i: Video,
-                    caption: "Run Web Audio + frame-hash locally",
+                    caption: "Real Web Audio + frame-hash locally",
                     testId: "source-upload",
                   },
                 ] as const
