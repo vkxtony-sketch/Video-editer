@@ -19,7 +19,7 @@ function makeCaptures() {
 }
 
 describe("installClientErrorTrap", () => {
-  let originalErrorFn: ((...args: unknown[]) => void) | null;
+  let originalErrorFn: typeof window.onerror;
 
   beforeEach(() => {
     _resetForTests();
@@ -48,8 +48,10 @@ describe("installClientErrorTrap", () => {
       }),
     );
     // Drain the 1.5s flush timer; captureFn is invoked synchronously
-    // once the flush fires.
-    vi.runAllTimers();
+    // once the flush fires. `advanceTimersByTime(2000)` fires only the
+    // immediate flushTimer — NOT the long-running pruneTimer setInterval
+    // (which would loop infinitely under `vi.runAllTimers()`).
+    vi.advanceTimersByTime(2000);
 
     expect(rows.length).toBeGreaterThan(0);
     const last = rows[rows.length - 1];
@@ -73,7 +75,7 @@ describe("installClientErrorTrap", () => {
     const ev = new Event("unhandledrejection") as any;
     ev.reason = new Error("async boom");
     window.dispatchEvent(ev);
-    vi.runAllTimers();
+    vi.advanceTimersByTime(2000);
 
     expect(rows.some((r) => r.kind === "unhandledrejection")).toBe(true);
     const r = rows.find((r) => r.kind === "unhandledrejection");
@@ -97,7 +99,7 @@ describe("installClientErrorTrap", () => {
     };
     window.dispatchEvent(new ErrorEvent("error", payload));
     window.dispatchEvent(new ErrorEvent("error", payload));
-    vi.runAllTimers();
+    vi.advanceTimersByTime(2000);
 
     const errRows = rows.filter((r) => r.kind === "error");
     expect(errRows.length).toBe(1);
@@ -123,7 +125,7 @@ describe("installClientErrorTrap", () => {
         error: err,
       }),
     );
-    vi.runAllTimers();
+    vi.advanceTimersByTime(2000);
 
     expect(rows.length).toBeGreaterThan(0);
     const last = rows[rows.length - 1];
@@ -138,6 +140,10 @@ describe("installClientErrorTrap", () => {
     vi.useRealTimers();
   });
 
+    uninstall();
+    vi.useRealTimers();
+  });
+
   it("monkeypatches console.error: captures AND invokes the original impl", () => {
     vi.useFakeTimers();
     const { rows, cap } = makeCaptures();
@@ -146,7 +152,7 @@ describe("installClientErrorTrap", () => {
 
     const uninstall = installClientErrorTrap({ capture: cap });
     console.error("sample boom — gsk_SAMPLEABCDEFGHIJK123456");
-    vi.runAllTimers();
+    vi.advanceTimersByTime(2000);
 
     // Original console.error was called.
     expect(spy).toHaveBeenCalled();
@@ -175,7 +181,7 @@ describe("installClientErrorTrap", () => {
         colno: 0,
       }),
     );
-    vi.runAllTimers();
+    vi.advanceTimersByTime(2000);
 
     expect(cap1).toHaveBeenCalled();
     expect(cap2).not.toHaveBeenCalled();
