@@ -10,6 +10,7 @@
 
 import type * as _narrativeHelpers from "../_narrativeHelpers.js";
 import type * as analyze from "../analyze.js";
+import type * as clientErrors from "../clientErrors.js";
 import type * as llm from "../llm.js";
 import type * as pipeline from "../pipeline.js";
 import type * as pipelineHelpers from "../pipelineHelpers.js";
@@ -25,6 +26,7 @@ import type {
 declare const fullApi: ApiFromModules<{
   _narrativeHelpers: typeof _narrativeHelpers;
   analyze: typeof analyze;
+  clientErrors: typeof clientErrors;
   llm: typeof llm;
   pipeline: typeof pipeline;
   pipelineHelpers: typeof pipelineHelpers;

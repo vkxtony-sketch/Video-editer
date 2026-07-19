@@ -19,15 +19,11 @@ function makeCaptures() {
 }
 
 describe("installClientErrorTrap", () => {
-  let originalErrorFn: typeof window.onerror;
-
   beforeEach(() => {
     _resetForTests();
-    originalErrorFn = window.onerror;
   });
   afterEach(() => {
     _resetForTests();
-    window.onerror = originalErrorFn;
   });
 
   it("captures window 'error' events with a sanitized payload", () => {
@@ -47,10 +43,8 @@ describe("installClientErrorTrap", () => {
         error: err,
       }),
     );
-    // Drain the 1.5s flush timer; captureFn is invoked synchronously
-    // once the flush fires. `advanceTimersByTime(2000)` fires only the
-    // immediate flushTimer — NOT the long-running pruneTimer setInterval
-    // (which would loop infinitely under `vi.runAllTimers()`).
+    // Drain the immediate 1.5s flush timer without firing the long-running
+    // pruneTimer setInterval (which would loop under vi.runAllTimers()).
     vi.advanceTimersByTime(2000);
 
     expect(rows.length).toBeGreaterThan(0);
@@ -135,10 +129,6 @@ describe("installClientErrorTrap", () => {
     expect((last.stack ?? "")).not.toMatch(/gsk_PROJECTTEST/);
     expect((last.stack ?? "")).toMatch(/REDACTED/);
     expect(last.message).not.toMatch(/\?token=sk_/);
-
-    uninstall();
-    vi.useRealTimers();
-  });
 
     uninstall();
     vi.useRealTimers();
