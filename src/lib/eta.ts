@@ -27,8 +27,21 @@ export interface EtaResult {
   isReal: boolean;
 }
 
-const REAL_TIME_MULTIPLIER = 0.75; // ~0.75× real-time for audio+video decode
 const DEMO_SECONDS = 8;
+
+// Empirical constants for the parallel browser pipeline:
+// - fixed overhead (decode setup, artifact build, ingest)
+// - per-sample video seek cost (dynamic interval in videoAnalysis.ts)
+// - audio decode runs in parallel and is usually not the bottleneck.
+const REAL_OVERHEAD_SECONDS = 6;
+const VIDEO_SEEK_COST = 0.18; // seconds per frame sample
+
+function sampleIntervalFor(durationSec: number): number {
+  if (durationSec <= 30) return 3.0;
+  if (durationSec <= 120) return 2.0;
+  if (durationSec <= 600) return 1.5;
+  return 1.0;
+}
 
 /**
  * Estimate remaining edit time.
@@ -53,12 +66,18 @@ export function estimateEditTime(
     isReal = false;
   } else if (source === "youtube") {
     // YouTube goes through the same real analysis path as a URL, but we
-    // add a small constant for the backend metadata resolve step.
-    totalSeconds = Math.max(15, durationSec * REAL_TIME_MULTIPLIER) + 5;
+    // add a backend metadata resolve + download step.
+    totalSeconds =
+      REAL_OVERHEAD_SECONDS +
+      Math.max(10, (durationSec / sampleIntervalFor(durationSec)) * VIDEO_SEEK_COST) +
+      8;
     isReal = true;
   } else {
-    // upload / url real analysis
-    totalSeconds = Math.max(15, durationSec * REAL_TIME_MULTIPLIER);
+    // upload / url real analysis: audio + video run in parallel;
+    // video frame sampling is usually the bottleneck.
+    totalSeconds =
+      REAL_OVERHEAD_SECONDS +
+      Math.max(10, (durationSec / sampleIntervalFor(durationSec)) * VIDEO_SEEK_COST);
     isReal = true;
   }
 

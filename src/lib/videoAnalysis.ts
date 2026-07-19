@@ -22,8 +22,17 @@ export type VideoAnalysis = {
   sceneChanges: SceneChange[];
 };
 
-const SAMPLE_INTERVAL = 1.0; // seconds between sampled frames
+const BASE_SAMPLE_INTERVAL = 1.0; // seconds between sampled frames for long videos
 const SCENE_THRESHOLD = 18; // Hamming distance > this counts as a scene change
+
+/** Pick a sample interval that keeps short videos fast without losing
+ *  scene-detection accuracy on long VODs. */
+function sampleIntervalFor(durationSec: number): number {
+  if (durationSec <= 30) return 3.0;
+  if (durationSec <= 120) return 2.0;
+  if (durationSec <= 600) return 1.5;
+  return BASE_SAMPLE_INTERVAL;
+}
 
 export async function analyzeVideo(
   url: string,
@@ -63,8 +72,9 @@ export async function analyzeVideo(
   const duration = isFinite(video.duration)
     ? Math.min(video.duration, totalDurationSec)
     : totalDurationSec;
+  const interval = sampleIntervalFor(duration);
   const samples: number[] = []; // tSec values
-  for (let t = 0; t <= duration - 0.001; t += SAMPLE_INTERVAL) {
+  for (let t = 0; t <= duration - 0.001; t += interval) {
     samples.push(Math.min(t, duration - 0.05));
   }
   if (samples.length === 0) samples.push(0);

@@ -94,50 +94,50 @@ export async function analyzeAndIngest(opts: {
 }): Promise<AnalysisArtifacts> {
   const url = URL.createObjectURL(opts.file);
   try {
-    // Stage 1: audio
+    // Stage 1: audio + video in parallel (both read the same blob URL).
     opts.onProgress?.({ stage: "audio-decode", frac: 0 });
-    const audio: AudioAnalysis = await analyzeAudio(url, (frac) => {
-      opts.onProgress?.({ stage: "audio-decode", frac });
-    });
+    opts.onProgress?.({ stage: "video-sample", frac: 0 });
+    const [audio, video] = await Promise.all([
+      analyzeAudio(url, (frac) => {
+        opts.onProgress?.({ stage: "audio-decode", frac });
+      }),
+      analyzeVideo(
+        url,
+        opts.file.size ? 0 : 0,
+        (frac) => {
+          opts.onProgress?.({ stage: "video-sample", frac });
+        },
+      ),
+    ]);
     opts.onProgress?.({ stage: "audio-rms", frac: 1 });
 
-    // Stage 2: video
-    opts.onProgress?.({ stage: "video-sample", frac: 0 });
-    const video: VideoAnalysis = await analyzeVideo(
-      url,
-      Math.max(audio.durationSec, opts.file.size ? 0 : audio.durationSec),
-      (frac) => {
-        opts.onProgress?.({ stage: "video-sample", frac });
-      },
-    );
-
-    // Stage 3: build artifacts from REAL data
+    // Stage 2: build artifacts from REAL data
     opts.onProgress?.({ stage: "build-artifacts", frac: 0 });
 
     // Capture real frame thumbnails at the top energy peaks (best-effort;
     // any failure falls back to palette-only thumbs so the UI still works).
+    // Run in parallel with the optional LLM overlay to avoid waiting twice.
     const peakWindows = findEnergyPeaks(audio.bins, audio.durationSec, 6, 45);
     let thumbFrames: { tSec: number; dataUrl: string }[] = [];
-    try {
-      const captured = await extractThumbnails(url, peakWindows, 5, (frac) => {
-        opts.onProgress?.({ stage: "build-artifacts", frac: frac * 0.5 });
-      });
-      thumbFrames = captured.map((c) => ({ tSec: c.tSec, dataUrl: c.dataUrl }));
-    } catch (e) {
-      console.warn("thumbnail capture failed:", e);
-    }
-
-    // Optional LLM overlay. Best-effort — any failure keeps the pool.
     let llmTitleOverrides: TitleArtifact[] | null = null;
     let llmHeadlineOverrides: ThumbArtifact[] | null = null;
-    if (opts.llmOverrides) {
-      try {
-        const overlays = await opts.llmOverrides();
-        llmTitleOverrides = overlays?.titles ?? null;
-        llmHeadlineOverrides = overlays?.headlines ?? null;
-      } catch (e) {
-        console.warn("LLM overlay failed, using deterministic:", e);
-      }
+    try {
+      const [captured, overlays] = await Promise.all([
+        extractThumbnails(url, peakWindows, 5, (frac) => {
+          opts.onProgress?.({ stage: "build-artifacts", frac: frac * 0.5 });
+        }),
+        opts.llmOverrides
+          ? opts.llmOverrides().catch((e) => {
+              console.warn("LLM overlay failed, using deterministic:", e);
+              return { titles: null, headlines: null };
+            })
+          : Promise.resolve({ titles: null, headlines: null }),
+      ]);
+      thumbFrames = captured.map((c) => ({ tSec: c.tSec, dataUrl: c.dataUrl }));
+      llmTitleOverrides = overlays?.titles ?? null;
+      llmHeadlineOverrides = overlays?.headlines ?? null;
+    } catch (e) {
+      console.warn("thumbnail capture failed:", e);
     }
 
     const artifacts = buildArtifacts({
