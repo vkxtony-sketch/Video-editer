@@ -18,7 +18,9 @@ export default function App() {
   // so the static getter stays stable across re-renders.
   useEffect(() => {
     return installClientErrorTrap({
-      capture: (row) => captureClientError(row),
+      capture: (row) => {
+        void captureClientError({ ...row, route: row.route ?? "/" });
+      },
       getOwnerId: () => {
         try {
           return window.localStorage.getItem("neon:session");
@@ -30,7 +32,11 @@ export default function App() {
   }, [captureClientError]);
 
   return (
-    <ClientErrorBoundary capture={(row) => captureClientError(row)}>
+    <ClientErrorBoundary
+      capture={(row) => {
+        void captureClientError({ ...row, route: row.route ?? "/" });
+      }}
+    >
       <AppLayout>
         <Routes>
           <Route path="/" element={<Landing />} />
