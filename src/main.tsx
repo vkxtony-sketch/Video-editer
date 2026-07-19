@@ -107,7 +107,12 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <GlobalErrorBoundary>
       <ConvexProvider client={convex}>
-        <BrowserRouter>
+        <BrowserRouter
+          future={{
+            v7_startTransition: true,
+            v7_relativeSplatPath: true,
+          }}
+        >
           <App />
           <Toaster
             richColors

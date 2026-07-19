@@ -5,7 +5,10 @@ import AppLayout from "../components/layout/AppLayout";
 
 function renderApp(children: React.ReactNode) {
   return render(
-    <MemoryRouter initialEntries={["/"]}>
+    <MemoryRouter
+      initialEntries={["/"]}
+      future={{ v7_startTransition: true, v7_relativeSplatPath: true }}
+    >
       <AppLayout>{children}</AppLayout>
     </MemoryRouter>,
   );
