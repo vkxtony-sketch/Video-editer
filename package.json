@@ -19,6 +19,7 @@
     "sync:amend": "git -c core.sshCommand=\"ssh -i /home/daytona/.ssh/id_ed25519 -o BatchMode=yes -o IdentitiesOnly=yes\" push --force-with-lease origin main"
   },
   "dependencies": {
+    "@distube/ytdl-core": "^4.16.12",
     "@ffmpeg/ffmpeg": "^0.12.15",
     "@ffmpeg/util": "^0.12.2",
     "@radix-ui/react-dialog": "^1.1.2",

@@ -19,6 +19,7 @@ import { Badge } from "../ui/badge";
 import { formatTimestamp } from "@/lib/utils";
 import type { RenderPreset } from "@/lib/useLocalStorage";
 import { estimateRender, formatEstimate } from "@/lib/ffmpeg/presetEstimate";
+import { estimateEditTime } from "@/lib/eta";
 
 export default function ProjectHeader({
   title,
@@ -42,6 +43,7 @@ export default function ProjectHeader({
   exportDisabled,
   clipCount,
   totalSec,
+  etaSeconds,
 }: {
   title: string;
   durationSec: number;
@@ -53,7 +55,7 @@ export default function ProjectHeader({
   onRerun: () => void;
   onReset: () => void;
   demoMode: boolean;
-  source?: "upload" | "url" | "demo" | "sample";
+  source?: "upload" | "url" | "demo" | "sample" | "youtube";
   audioCutCount?: number;
   audioScanDone?: boolean;
   /** Whether the title/thumbnail stage used a real LLM (e.g. Groq) or fell back to the deterministic pool. */
@@ -76,6 +78,8 @@ export default function ProjectHeader({
   clipCount?: number;
   /** Sum of `endSec − startSec` across those clips — the predicted reel length. */
   totalSec?: number;
+  /** Estimated total edit time in seconds (stored on the project). */
+  etaSeconds?: number;
 }) {
   const isProc = status === "processing";
   const isReady = status === "ready";
@@ -170,6 +174,13 @@ export default function ProjectHeader({
             <Cpu className="h-3.5 w-3.5 text-primary" />
             <span>{activeStage || (isReady ? "Idle" : "Starting…")}</span>
           </div>
+          <EtaDisplay
+            source={source}
+            durationSec={durationSec}
+            progress={progress}
+            etaSeconds={etaSeconds}
+            isReady={isReady}
+          />
           <div className="min-w-[180px] max-w-[320px] flex-1">
             <Progress value={progress} />
           </div>
@@ -385,4 +396,32 @@ function capitalizeProvider(provider: string): string {
   const first = provider.slice(0, space);
   const rest = provider.slice(space);
   return first.charAt(0).toUpperCase() + first.slice(1) + rest;
+}
+
+function EtaDisplay({
+  source,
+  durationSec,
+  progress,
+  etaSeconds,
+  isReady,
+}: {
+  source?: "upload" | "url" | "demo" | "sample" | "youtube";
+  durationSec: number;
+  progress: number;
+  etaSeconds?: number;
+  isReady: boolean;
+}) {
+  if (isReady) return null;
+  const eta = estimateEditTime(source ?? "demo", durationSec, progress);
+  return (
+    <div className="flex items-center gap-1.5 rounded border border-border/70 bg-secondary/40 px-2 py-1 text-xs text-muted-foreground">
+      <Clock3 className="h-3.5 w-3.5 text-primary" />
+      <span>{eta.text}</span>
+      {eta.isReal && etaSeconds && etaSeconds > 60 && (
+        <span className="hidden text-[10px] text-muted-foreground/70 sm:inline">
+          of {Math.round(etaSeconds / 60)}m total
+        </span>
+      )}
+    </div>
+  );
 }

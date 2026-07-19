@@ -9,6 +9,7 @@ export default defineSchema({
       v.literal("url"),
       v.literal("demo"),
       v.literal("sample"),
+      v.literal("youtube"),
     ),
     sourceUrl: v.optional(v.string()),
     sourceLabel: v.optional(v.string()),
@@ -28,6 +29,10 @@ export default defineSchema({
     summary: v.optional(v.string()),
     audioScanDone: v.optional(v.boolean()),
     audioCutCount: v.optional(v.number()),
+    /** Estimated total edit time in seconds (computed at creation). */
+    etaSeconds: v.optional(v.number()),
+    /** When the current run started; used to compute elapsed/remaining time. */
+    startedAt: v.optional(v.number()),
   }).index("by_owner", ["ownerId"]),
 
   pipelineRuns: defineTable({

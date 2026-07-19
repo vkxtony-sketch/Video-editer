@@ -10,12 +10,14 @@ export const create = mutation({
       v.literal("url"),
       v.literal("demo"),
       v.literal("sample"),
+      v.literal("youtube"),
     ),
     sourceUrl: v.optional(v.string()),
     sourceLabel: v.optional(v.string()),
     durationSec: v.number(),
     sizeMb: v.optional(v.number()),
     persona: v.optional(v.string()),
+    etaSeconds: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -33,6 +35,8 @@ export const create = mutation({
       updatedAt: now,
       ownerId,
       persona: args.persona,
+      etaSeconds: args.etaSeconds,
+      startedAt: now,
     });
     return { projectId, ownerId };
   },

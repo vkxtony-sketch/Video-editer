@@ -15,6 +15,7 @@ import {
   Trash2,
   Upload,
   Video,
+  Youtube,
 } from "lucide-react";
 import { Button } from "../components/ui/button";
 import { Badge } from "../components/ui/badge";
@@ -40,6 +41,7 @@ import {
   validateVideoUrl,
 } from "../lib/urlFetch";
 import { generateSampleClip } from "../lib/sampleClip";
+import { estimateEditTime } from "../lib/eta";
 
 const personas = [
   { key: "podcast", label: "Podcast · Multi-cam", dur: 90 * 60 },
@@ -59,7 +61,7 @@ const STAGE_LABEL: Record<AnalysisProgress["stage"], string> = {
 };
 
 type IngestFileOpts = {
-  sourceKind?: "upload" | "url" | "sample";
+  sourceKind?: "upload" | "url" | "sample" | "youtube";
   /** Override what's stored in the project's `sourceUrl` (e.g. the
    * original https URL for `source === "url"`). If omitted, we store
    * the blob: URL the analyzer actually reads. */
@@ -81,12 +83,15 @@ export default function Dashboard() {
   const ingestAnalysis = useMutation(api.analyze.ingestAnalysis);
   const ingestSceneMarks = useMutation(api.analyze.ingestSceneMarks);
   const generateNarrative = useAction(api.llm.generateNarrative);
+  const fetchYoutube = useAction(api.youtube.fetchAndStore);
   const navigate = useNavigate();
   const [open, setOpen] = useState(false);
   const [dragOver, setDragOver] = useState(false);
   const [analyzing, setAnalyzing] = useState<{
     stage: AnalysisProgress["stage"];
     frac: number;
+    source: "upload" | "url" | "sample" | "youtube";
+    durationSec: number;
   } | null>(null);
   // Live count of recent client-side errors (window.onerror,
   // unhandledrejection, console.error intercepts, React render errors).
@@ -132,7 +137,6 @@ export default function Dashboard() {
     }
 
     const sourceKind = opts.sourceKind ?? "upload";
-    setAnalyzing({ stage: "audio-decode", frac: 0 });
     const url = URL.createObjectURL(file);
     const probedDuration = await probeDuration(url).catch(() => 0);
     const minutes = Math.max(1, Math.round(file.size / (1024 * 1024)));
@@ -145,6 +149,12 @@ export default function Dashboard() {
         (opts.durationSecOverride ?? probedDuration) || (minutes * 60),
       ),
     );
+    setAnalyzing({
+      stage: "audio-decode",
+      frac: 0,
+      source: sourceKind,
+      durationSec,
+    });
     const minutesForLabel = Math.max(1, Math.round(file.size / (1024 * 1024)));
     const sourceLabel =
       opts.sourceLabelOverride ??
@@ -152,7 +162,11 @@ export default function Dashboard() {
         ? `URL ingest · ${file.name} · ${minutesForLabel}MB`
         : sourceKind === "sample"
           ? `Sample tutorial clip · ${file.name}`
-          : `${file.name} · ${minutesForLabel}MB`);
+          : sourceKind === "youtube"
+            ? `YouTube ingest · ${file.name} · ${minutesForLabel}MB`
+            : `${file.name} · ${minutesForLabel}MB`);
+
+    const eta = estimateEditTime(sourceKind, durationSec, 0);
 
     const { projectId } = await create({
       ownerId,
@@ -163,6 +177,7 @@ export default function Dashboard() {
       durationSec,
       sizeMb: minutes,
       persona: opts.personaOverride ?? (sourceKind === "sample" ? "tutorial sample" : "user upload"),
+      etaSeconds: eta.seconds,
     });
 
     try {
@@ -213,7 +228,13 @@ export default function Dashboard() {
             return { titles: null, headlines: null };
           }
         },
-        onProgress: (p) => setAnalyzing({ stage: p.stage, frac: p.frac }),
+        onProgress: (p) =>
+          setAnalyzing((prev) => ({
+            stage: p.stage,
+            frac: p.frac,
+            source: sourceKind,
+            durationSec: prev?.durationSec ?? durationSec,
+          })),
       });
       navigate(`/studio/${projectId}`);
     } catch (err) {
@@ -252,6 +273,8 @@ export default function Dashboard() {
         <AnalyzingOverlay
           stage={analyzing.stage}
           frac={analyzing.frac}
+          source={analyzing.source}
+          durationSec={analyzing.durationSec}
         />
       )}
 
@@ -291,15 +314,17 @@ export default function Dashboard() {
             disabled={!ownerId}
             onClick={async () => {
               try {
-                setAnalyzing({ stage: "audio-decode", frac: 0 });
+                setAnalyzing({ stage: "audio-decode", frac: 0, source: "sample", durationSec: 30 });
                 const file = await generateSampleClip({
                   onProgress: (p) => {
                     if (p.phase === "render") {
-                      setAnalyzing({
-                        stage: "audio-decode",
-                        frac:
-                          p.totalSec > 0 ? p.elapsedSec / p.totalSec : 0,
-                      });
+                setAnalyzing({
+                  stage: "audio-decode",
+                  frac:
+                    p.totalSec > 0 ? p.elapsedSec / p.totalSec : 0,
+                  source: "sample",
+                  durationSec: 30,
+                });
                     }
                   },
                 });
@@ -405,10 +430,15 @@ export default function Dashboard() {
 function AnalyzingOverlay({
   stage,
   frac,
+  source = "upload",
+  durationSec = 0,
 }: {
   stage: AnalysisProgress["stage"];
   frac: number;
+  source?: "upload" | "url" | "demo" | "sample" | "youtube";
+  durationSec?: number;
 }) {
+  const eta = estimateEditTime(source, durationSec, frac * 100);
   return (
     <div
       aria-live="polite"
@@ -428,6 +458,9 @@ function AnalyzingOverlay({
         <p className="mt-3 text-xs text-muted-foreground">
           Running real Web Audio + frame-hash analysis in your browser. No
           data leaves your device.
+        </p>
+        <p className="mt-2 text-xs font-medium text-primary">
+          {eta.text}
         </p>
       </div>
     </div>
@@ -454,7 +487,7 @@ function ProjectCard({
   progress: number;
   summary?: string;
   persona?: string;
-  source?: "upload" | "url" | "demo" | "sample";
+  source?: "upload" | "url" | "demo" | "sample" | "youtube";
   coverThumb?: { headline: string; imageDataUrl: string } | null;
   onOpen: () => void;
   onDelete: () => void;
@@ -513,6 +546,11 @@ function ProjectCard({
                   Real sample
                 </span>
               )}
+              {source === "youtube" && (
+                <span className="inline-flex items-center gap-1 rounded border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.18em] text-accent">
+                  YouTube
+                </span>
+              )}
             </div>
           </div>
           <Badge className={statusMeta[status].c}>{statusMeta[status].l}</Badge>
@@ -520,7 +558,7 @@ function ProjectCard({
         <div className="mt-5 space-y-2">
           <div className="flex items-center justify-between text-xs text-muted-foreground">
             <span>{status === "ready" ? "Pipeline complete" : `${progress || 0}%`}</span>
-            <span className="font-mono">{formatTimestamp(0)}</span>
+            <EtaBadge source={source} durationSec={durationSec} progress={progress} />
           </div>
           <Progress value={progress || (status === "ready" ? 100 : 4)} />
           {summary && (
@@ -597,7 +635,27 @@ function GridSkeleton() {
       ))}
     </div>
   );
-}  function NewProjectDialog({
+}
+
+function EtaBadge({
+  source,
+  durationSec,
+  progress,
+}: {
+  source?: "upload" | "url" | "demo" | "sample" | "youtube";
+  durationSec: number;
+  progress: number;
+}) {
+  const eta = estimateEditTime(source ?? "demo", durationSec, progress);
+  return (
+    <span className="inline-flex items-center gap-1 font-mono text-[10px] text-muted-foreground">
+      <Clock3 className="h-3 w-3" />
+      {progress >= 100 ? "Done" : eta.text}
+    </span>
+  );
+}
+
+function NewProjectDialog({
     open,
     setOpen,
     onFile,
@@ -606,15 +664,16 @@ function GridSkeleton() {
     setOpen: (v: boolean) => void;
     onFile: (f: File, opts?: IngestFileOpts) => void;
   }) {
+    const fetchYoutube = useAction(api.youtube.fetchAndStore);
     const ownerId = useSession();
     const create = useMutation(api.projects.create);
     const navigate = useNavigate();
     const fileInputRef = useRef<HTMLInputElement | null>(null);
     const [personaKey, setPersonaKey] = useState(personas[0].key);
     const [title, setTitle] = useState("");
-    const [sourceKind, setSourceKind] = useState<"url" | "upload" | "demo">(
-      "demo",
-    );
+    const [sourceKind, setSourceKind] = useState<
+      "url" | "upload" | "demo" | "youtube"
+    >("demo");
     const [sourceUrl, setSourceUrl] = useState("");
     const [busy, setBusy] = useState(false);
 
@@ -622,6 +681,9 @@ function GridSkeleton() {
       if (!ownerId) return;
       if (sourceKind === "url") {
         return startUrlRun();
+      }
+      if (sourceKind === "youtube") {
+        return startYoutubeRun();
       }
       // Demo path: server-side mock runs the seeded 7-stage pipeline.
       setBusy(true);
@@ -674,6 +736,35 @@ function GridSkeleton() {
       } catch (e) {
         alert(
           `URL ingest failed: ${e instanceof Error ? e.message : String(e)}`,
+        );
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function startYoutubeRun() {
+      const raw = sourceUrl.trim();
+      if (!raw.includes("youtube.com") && !raw.includes("youtu.be")) {
+        alert("Please enter a valid YouTube URL");
+        return;
+      }
+      setBusy(true);
+      try {
+        const yt = await fetchYoutube({ url: raw });
+        const file = await fetchUrlAsVideoFile(yt.storageUrl);
+        const label = `YouTube ingest · ${(file.size / 1024 / 1024).toFixed(1)}MB`;
+        setOpen(false);
+        onFile(file, {
+          sourceKind: "youtube",
+          sourceUrlOverride: raw,
+          sourceLabelOverride: label,
+          personaOverride: "youtube ingest",
+          durationSecOverride: yt.durationSec || undefined,
+          titleOverride: title.trim() || yt.title || "YouTube ingest",
+        });
+      } catch (e) {
+        alert(
+          `YouTube ingest failed: ${e instanceof Error ? e.message : String(e)}`,
         );
       } finally {
         setBusy(false);
@@ -738,20 +829,27 @@ function GridSkeleton() {
                     caption: "Mock UI only · no file ingested",
                     testId: "source-demo",
                   },
-                  {
-                    k: "url",
-                    l: "Video URL",
-                    i: Upload,
-                    caption: "Fetch public MP4 · real analysis",
-                    testId: "source-url",
-                  },
-                  {
-                    k: "upload",
-                    l: "Upload",
-                    i: Video,
-                    caption: "Real Web Audio + frame-hash locally",
-                    testId: "source-upload",
-                  },
+              {
+                k: "url",
+                l: "Video URL",
+                i: Upload,
+                caption: "Fetch public MP4 · real analysis",
+                testId: "source-url",
+              },
+              {
+                k: "youtube",
+                l: "YouTube",
+                i: Youtube,
+                caption: "Proxy download via Convex Storage",
+                testId: "source-youtube",
+              },
+              {
+                k: "upload",
+                l: "Upload",
+                i: Video,
+                caption: "Real Web Audio + frame-hash locally",
+                testId: "source-upload",
+              },
                 ] as const
               ).map((opt) => (
                 <button
@@ -774,9 +872,13 @@ function GridSkeleton() {
                 </button>
               ))}
             </div>
-            {sourceKind === "url" && (
+            {(sourceKind === "url" || sourceKind === "youtube") && (
               <Input
-                placeholder="https://youtube.com/watch?v=… or https://…/file.mp4"
+                placeholder={
+                  sourceKind === "youtube"
+                    ? "https://youtube.com/watch?v=…"
+                    : "https://…/file.mp4"
+                }
                 className="mt-2"
                 value={sourceUrl}
                 onChange={(e) => setSourceUrl(e.target.value)}

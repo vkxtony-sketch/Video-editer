@@ -449,6 +449,7 @@ export default function Studio() {
         exportDisabled={isExporting}
         clipCount={derivedExportCount}
         totalSec={derivedExportTotalSec}
+        etaSeconds={project.etaSeconds ?? undefined}
       />
 
       <div className="grid grid-cols-1 gap-3 px-3 py-3 lg:grid-cols-12">
