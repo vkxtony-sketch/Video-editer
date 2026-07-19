@@ -665,6 +665,7 @@ function NewProjectDialog({
     onFile: (f: File, opts?: IngestFileOpts) => void;
   }) {
     const fetchYoutube = useAction(api.youtube.fetchAndStore);
+    const fetchUrlProxy = useAction(api.urlProxy.fetchAndStore);
     const ownerId = useSession();
     const create = useMutation(api.projects.create);
     const navigate = useNavigate();
@@ -722,7 +723,8 @@ function NewProjectDialog({
       }
       setBusy(true);
       try {
-        const file = await fetchUrlAsVideoFile(sourceUrl);
+        const proxied = await fetchUrlProxy({ url: sourceUrl.trim() });
+        const file = await fetchUrlAsVideoFile(proxied.storageUrl);
         const label = `URL ingest · ${v.filename} · ${(file.size / 1024 / 1024).toFixed(1)}MB`;
         setOpen(false);
         onFile(file, {

@@ -16,6 +16,7 @@ import type * as pipeline from "../pipeline.js";
 import type * as pipelineHelpers from "../pipelineHelpers.js";
 import type * as projects from "../projects.js";
 import type * as queries from "../queries.js";
+import type * as urlProxy from "../urlProxy.js";
 import type * as youtube from "../youtube.js";
 
 import type {
@@ -33,6 +34,7 @@ declare const fullApi: ApiFromModules<{
   pipelineHelpers: typeof pipelineHelpers;
   projects: typeof projects;
   queries: typeof queries;
+  urlProxy: typeof urlProxy;
   youtube: typeof youtube;
 }>;
 
